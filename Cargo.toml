@@ -1,8 +1,10 @@
 [package]
 name = "wraith"
 version = "0.0.1"
+description = "A simple compiler backend"
 authors = ["maya"]
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/maiadere/wraith"
 
 [dependencies]
