@@ -44,6 +44,22 @@ impl Function {
         Value::Register(reg)
     }
 
+    fn add_instr(&mut self, instr: Instruction) {
+        self.stmts.push(Statement::Instruction(instr));
+    }
+
+    pub fn alloc(&mut self, ty: Type, size: usize) -> Value {
+        self.reg(Instruction::Alloc(self.reg, ty, size))
+    }
+
+    pub fn load(&mut self, ty: Type, ptr: Value) -> Value {
+        self.reg(Instruction::Load(self.reg, ty, ptr))
+    }
+
+    pub fn store(&mut self, ty: Type, ptr: Value, value: Value) {
+        self.add_instr(Instruction::Store(ty, ptr, value));
+    }
+
     pub fn add(&mut self, ty: Type, a: Value, b: Value) -> Value {
         self.reg(Instruction::Add(self.reg, ty, a, b))
     }
@@ -60,8 +76,15 @@ impl Function {
         self.reg(Instruction::Div(self.reg, ty, a, b))
     }
 
+    pub fn jump(&mut self, lbl: Label) {
+        self.add_instr(Instruction::Jump(lbl));
+    }
+
+    pub fn branch(&mut self, cond: Value, if_true: Label, if_false: Option<Label>) {
+        self.add_instr(Instruction::Branch(cond, if_true, if_false));
+    }
+
     pub fn ret(&mut self, value: Value) {
-        let instr = Instruction::Ret(value);
-        self.stmts.push(Statement::Instruction(instr));
+        self.add_instr(Instruction::Ret(value));
     }
 }

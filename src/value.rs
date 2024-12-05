@@ -16,5 +16,4 @@ pub enum Constant {
 pub enum Value {
     Constant(Constant),
     Register(usize),
-    MemorySlot(usize),
 }
