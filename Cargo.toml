@@ -1,0 +1,8 @@
+[package]
+name = "wraith"
+version = "0.0.1"
+authors = ["maya"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
