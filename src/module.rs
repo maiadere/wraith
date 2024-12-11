@@ -1,22 +1,20 @@
-use std::collections::HashMap;
-
-use crate::function::Function;
+use crate::function::FunctionBuilder;
 
 #[derive(Debug, Clone)]
-pub struct Module {
-    functions: HashMap<String, Function>,
+pub struct ModuleBuilder {
+    functions: Vec<FunctionBuilder>,
 }
 
-impl Module {
+impl ModuleBuilder {
     pub fn new() -> Self {
         Self {
-            functions: HashMap::new(),
+            functions: Vec::new(),
         }
     }
 
-    pub fn function(&mut self, name: &str) -> &mut Function {
-        self.functions
-            .entry(name.to_string())
-            .or_insert_with(Function::new)
+    pub fn function(&mut self, name: impl ToString) -> &mut FunctionBuilder {
+        let function = FunctionBuilder::new(name.to_string());
+        self.functions.push(function);
+        self.functions.last_mut().unwrap()
     }
 }
