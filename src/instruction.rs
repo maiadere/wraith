@@ -18,13 +18,10 @@ pub enum Constant {
     I32(i32),
 }
 
-pub type MemorySlotId = usize;
-
 #[derive(Debug, Clone, Copy)]
 pub enum Value {
     Constant(Constant),
     Register(VirtualRegister),
-    MemorySlot(MemorySlotId),
 }
 
 #[derive(Debug, Clone)]

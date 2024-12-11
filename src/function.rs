@@ -14,7 +14,6 @@ pub struct FunctionBuilder {
     pub(crate) stmts: Vec<Statement>,
 
     reg_id_generator: RangeFrom<usize>,
-    mem_id_generator: RangeFrom<usize>,
     lbl_id_generator: RangeFrom<usize>,
 }
 
@@ -24,7 +23,6 @@ impl FunctionBuilder {
             name,
             stmts: Vec::new(),
             reg_id_generator: 0..,
-            mem_id_generator: 0..,
             lbl_id_generator: 0..,
         }
     }
@@ -41,6 +39,57 @@ impl FunctionBuilder {
 
     pub fn constant(&mut self, value: Constant) -> Value {
         Value::Constant(value)
+    }
+
+    fn alloc_stmt(&self, target: VirtualRegister, ty: Type, count: Option<usize>) -> Statement {
+        Statement::Instruction(Instruction {
+            opcode: Opcode::Alloc,
+            ty: Some(ty),
+            target: Some(target),
+            arg1: Some(Value::Constant(Constant::I32(count.unwrap_or(1) as i32))),
+            ..Default::default()
+        })
+    }
+
+    pub fn prealloc_n(&mut self, ty: Type, count: Option<usize>) -> Value {
+        let target = self.new_register(ty);
+        self.stmts.insert(0, self.alloc_stmt(target, ty, count));
+        Value::Register(target)
+    }
+
+    pub fn prealloc(&mut self, ty: Type) -> Value {
+        self.prealloc_n(ty, None)
+    }
+
+    pub fn alloc_n(&mut self, ty: Type, count: Option<usize>) -> Value {
+        let target = self.new_register(ty);
+        self.stmts.push(self.alloc_stmt(target, ty, count));
+        Value::Register(target)
+    }
+
+    pub fn alloc(&mut self, ty: Type) -> Value {
+        self.alloc_n(ty, None)
+    }
+
+    pub fn load(&mut self, ty: Type, ptr: Value) -> Value {
+        let target = self.new_register(ty);
+        self.stmts.push(Statement::Instruction(Instruction {
+            opcode: Opcode::Load,
+            ty: Some(ty),
+            target: Some(target),
+            arg1: Some(ptr),
+            ..Default::default()
+        }));
+        Value::Register(target)
+    }
+
+    pub fn store(&mut self, ptr: Value, value: Value) {
+        self.stmts.push(Statement::Instruction(Instruction {
+            opcode: Opcode::Store,
+            arg1: Some(ptr),
+            arg2: Some(value),
+            ..Default::default()
+        }));
     }
 
     pub fn add(&mut self, ty: Type, lhs: Value, rhs: Value) -> Value {
