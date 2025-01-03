@@ -1,141 +1,127 @@
 use std::ops::RangeFrom;
 
-use crate::instruction::{Constant, Instruction, Label, Opcode, Type, Value, VirtualRegister};
+use crate::instruction::{Instruction, Label, MemorySlot, Pointer, Register, Type, Value};
 
 #[derive(Debug, Clone)]
-pub enum Statement {
-    Instruction(Instruction),
-    Label(Label),
+pub struct Function {
+    pub name: String,
+    pub ty: Type,
+    pub instrs: Vec<Instruction>,
+    pub(crate) reg_id: RangeFrom<usize>,
+    pub(crate) lbl_id: RangeFrom<usize>,
 }
 
-#[derive(Debug, Clone)]
-pub struct FunctionBuilder {
-    pub(crate) name: String,
-    pub(crate) stmts: Vec<Statement>,
-
-    reg_id_generator: RangeFrom<usize>,
-    lbl_id_generator: RangeFrom<usize>,
-}
-
-impl FunctionBuilder {
-    pub fn new(name: String) -> Self {
+impl Function {
+    pub fn new(name: String, ty: Type) -> Self {
         Self {
             name,
-            stmts: Vec::new(),
-            reg_id_generator: 0..,
-            lbl_id_generator: 0..,
-        }
-    }
-
-    fn new_register(&mut self, ty: Type) -> VirtualRegister {
-        VirtualRegister {
-            id: self
-                .reg_id_generator
-                .next()
-                .expect("ran out of unique register IDs"),
             ty,
+            instrs: Vec::new(),
+            reg_id: 0..,
+            lbl_id: 0..,
         }
     }
 
-    pub fn constant(&mut self, value: Constant) -> Value {
-        Value::Constant(value)
+    pub(crate) fn new_register(&mut self, ty: Type) -> Register {
+        Register::new(self.reg_id.next().expect("ran out of register IDs"), ty)
     }
 
-    fn alloc_stmt(&self, target: VirtualRegister, ty: Type, count: Option<usize>) -> Statement {
-        Statement::Instruction(Instruction {
-            opcode: Opcode::Alloc,
-            ty: Some(ty),
-            target: Some(target),
-            arg1: Some(Value::Constant(Constant::I32(count.unwrap_or(1) as i32))),
-            ..Default::default()
-        })
+    pub(crate) fn new_memory_slot(&mut self) -> MemorySlot {
+        MemorySlot::new(self.reg_id.next().expect("ran out of memory slot IDs"))
     }
 
-    pub fn prealloc_n(&mut self, ty: Type, count: Option<usize>) -> Value {
-        let target = self.new_register(ty);
-        self.stmts.insert(0, self.alloc_stmt(target, ty, count));
-        Value::Register(target)
+    pub fn alloc(&mut self, ty: Type, count: usize) -> MemorySlot {
+        let memory_slot = self.new_memory_slot();
+        self.instrs.push(Instruction::Alloc(memory_slot, ty, count));
+        memory_slot
     }
 
-    pub fn prealloc(&mut self, ty: Type) -> Value {
-        self.prealloc_n(ty, None)
+    pub fn load(&mut self, ty: Type, ptr: impl Into<Pointer>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs.push(Instruction::Load(reg, ptr.into()));
+        reg
     }
 
-    pub fn alloc_n(&mut self, ty: Type, count: Option<usize>) -> Value {
-        let target = self.new_register(ty);
-        self.stmts.push(self.alloc_stmt(target, ty, count));
-        Value::Register(target)
+    pub fn store(&mut self, ty: Type, ptr: impl Into<Pointer>, value: impl Into<Value>) {
+        self.instrs
+            .push(Instruction::Store(ty, ptr.into(), value.into()));
     }
 
-    pub fn alloc(&mut self, ty: Type) -> Value {
-        self.alloc_n(ty, None)
+    pub fn mov(&mut self, ty: Type, value: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs.push(Instruction::Mov(reg, value.into()));
+        reg
     }
 
-    pub fn load(&mut self, ty: Type, ptr: Value) -> Value {
-        let target = self.new_register(ty);
-        self.stmts.push(Statement::Instruction(Instruction {
-            opcode: Opcode::Load,
-            ty: Some(ty),
-            target: Some(target),
-            arg1: Some(ptr),
-            ..Default::default()
-        }));
-        Value::Register(target)
+    pub fn add(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs
+            .push(Instruction::Add(reg, lhs.into(), rhs.into()));
+        reg
     }
 
-    pub fn store(&mut self, ptr: Value, value: Value) {
-        self.stmts.push(Statement::Instruction(Instruction {
-            opcode: Opcode::Store,
-            arg1: Some(ptr),
-            arg2: Some(value),
-            ..Default::default()
-        }));
+    pub fn sub(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs
+            .push(Instruction::Sub(reg, lhs.into(), rhs.into()));
+        reg
     }
 
-    pub fn add(&mut self, ty: Type, lhs: Value, rhs: Value) -> Value {
-        let target = self.new_register(ty);
-        self.push_3ac(Opcode::Add, ty, target, lhs, rhs)
+    pub fn mul(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs
+            .push(Instruction::Mul(reg, lhs.into(), rhs.into()));
+        reg
     }
 
-    pub fn sub(&mut self, ty: Type, lhs: Value, rhs: Value) -> Value {
-        let target = self.new_register(ty);
-        self.push_3ac(Opcode::Sub, ty, target, lhs, rhs)
+    pub fn div(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs
+            .push(Instruction::Div(reg, lhs.into(), rhs.into()));
+        reg
     }
 
-    pub fn mul(&mut self, ty: Type, lhs: Value, rhs: Value) -> Value {
-        let target = self.new_register(ty);
-        self.push_3ac(Opcode::Mul, ty, target, lhs, rhs)
+    pub fn new_label(&mut self) -> Label {
+        Label {
+            id: self.lbl_id.next().expect("ran out of label IDs"),
+        }
     }
 
-    pub fn div(&mut self, ty: Type, lhs: Value, rhs: Value) -> Value {
-        let target = self.new_register(ty);
-        self.push_3ac(Opcode::Div, ty, target, lhs, rhs)
+    pub fn add_label(&mut self, label: Label) {
+        self.instrs.push(Instruction::Label(label));
     }
 
-    pub fn ret(&mut self, value: Value) {
-        self.stmts.push(Statement::Instruction(Instruction {
-            opcode: Opcode::Ret,
-            arg1: Some(value),
-            ..Default::default()
-        }));
+    pub fn label(&mut self) -> Label {
+        let label = self.new_label();
+        self.add_label(label);
+        label
     }
 
-    fn push_3ac(
-        &mut self,
-        opcode: Opcode,
-        ty: Type,
-        target: VirtualRegister,
-        arg1: Value,
-        arg2: Value,
-    ) -> Value {
-        self.stmts.push(Statement::Instruction(Instruction {
-            opcode,
-            ty: Some(ty),
-            target: Some(target),
-            arg1: Some(arg1),
-            arg2: Some(arg2),
-            ..Default::default()
-        }));
-        Value::Register(target)
+    pub fn jump(&mut self, target: Label) {
+        self.instrs.push(Instruction::Jump(target));
+    }
+
+    pub fn branch(&mut self, cond: Register, if_true: Label, if_false: Option<Label>) {
+        self.instrs
+            .push(Instruction::Branch(cond, if_true, if_false));
+    }
+
+    pub fn ret(&mut self, value: Option<impl Into<Value>>) {
+        self.instrs.push(Instruction::Ret(value.map(Into::into)));
+    }
+}
+
+impl std::fmt::Display for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "fn {}() -> {} {{", self.name, self.ty)?;
+        for instr in &self.instrs {
+            if let Instruction::Label(label) = instr {
+                writeln!(f, "{}:", label)?;
+            } else {
+                writeln!(f, "    {}", instr)?;
+            }
+        }
+        writeln!(f, "}}")?;
+        Ok(())
     }
 }

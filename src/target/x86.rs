@@ -1,16 +1,31 @@
-use crate::instruction::Type;
+use crate::instruction::{RegisterId, Type::*};
 
-use super::{Target, TargetRegisters};
+use super::{RegisterKind::*, Target, TargetRegisterInfo};
 
-pub struct X86Target;
+pub struct X86;
 
-impl Target for X86Target {
-    const REGISTERS: TargetRegisters = &[
-        &[("eax", Type::I32), ("ax", Type::I16), ("al", Type::I8)],
-        &[("ebx", Type::I32), ("bx", Type::I16), ("bl", Type::I8)],
-        &[("ecx", Type::I32), ("cx", Type::I16), ("cl", Type::I8)],
-        &[("edx", Type::I32), ("dx", Type::I16), ("dl", Type::I8)],
-        &[("esi", Type::I32), ("si", Type::I16), ("sil", Type::I8)],
-        &[("edi", Type::I32), ("di", Type::I16), ("dil", Type::I8)],
-    ];
+const EAX: RegisterId = 0;
+const EBX: RegisterId = 1;
+const ECX: RegisterId = 2;
+const EDX: RegisterId = 3;
+const ESI: RegisterId = 4;
+const EDI: RegisterId = 5;
+
+impl Target for X86 {
+    fn registers(&self) -> TargetRegisterInfo {
+        let mut regs = TargetRegisterInfo::new();
+
+        for i in [EAX, ECX, EDX] {
+            regs.add(i, I8 | I16 | I32, CallerSaved);
+        }
+
+        for i in [EBX, ESI, EDI] {
+            regs.add(i, I8 | I16 | I32, CalleeSaved);
+        }
+
+        // allow i64, f32, or f64 virtual regs to stay virtual
+        // for spilling without IR's load/store instructions
+        regs.keep_virtual(I64 | F32 | F64);
+        regs
+    }
 }
