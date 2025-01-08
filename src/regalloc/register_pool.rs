@@ -7,7 +7,7 @@ use crate::{
 
 use super::live_interval::LiveInterval;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RegisterPool {
     registers: TargetRegisterInfo,
     liveness: HashMap<RegisterId, HashSet<LiveInterval>>,

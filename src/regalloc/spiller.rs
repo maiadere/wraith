@@ -7,6 +7,7 @@ use crate::{
 
 use super::register_map::RegisterMap;
 
+#[derive(Debug, Clone)]
 pub struct Spiller {
     spilled_regs: Vec<Register>,
 }

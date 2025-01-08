@@ -5,6 +5,7 @@ use crate::{
     instruction::{Instruction, Pointer, Register, Value},
 };
 
+#[derive(Debug, Clone)]
 pub struct RegisterMap {
     map: HashMap<Register, Register>,
 }

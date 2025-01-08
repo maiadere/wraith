@@ -12,13 +12,14 @@ pub mod register_pool;
 pub mod spill_cost;
 pub mod spiller;
 
-struct RegAllocBasic {
+#[derive(Debug, Clone)]
+struct RegisterAllocator {
     reg_pool: RegisterPool,
     reg_map: RegisterMap,
     spiller: Spiller,
 }
 
-impl RegAllocBasic {
+impl RegisterAllocator {
     fn new(target: &dyn Target) -> Self {
         Self {
             reg_pool: RegisterPool::new(target),
@@ -30,7 +31,7 @@ impl RegAllocBasic {
     /// Selects physical registers for each virtual register in the given list.
     ///
     /// Returns Err(()) if a register couldn't be allocated, otherwise Ok(()).
-    fn select(&mut self, function: &Function, regs: Vec<Register>) -> Result<(), ()> {
+    fn try_select(&mut self, function: &Function, regs: Vec<Register>) -> Result<(), ()> {
         let live_intervals = calculate_live_intervals(function);
 
         for virt_reg in regs {
@@ -51,45 +52,39 @@ impl RegAllocBasic {
         Ok(())
     }
 
-    fn allocate(
-        &mut self,
-        function: &Function,
-        n: usize,
-        regs: &Vec<Register>,
-    ) -> Result<Function, ()> {
-        let mut function = function.clone();
-        let regs_to_spill: Vec<Register> = regs.iter().rev().take(n).cloned().collect();
-        self.spiller.rewrite(&mut function, regs_to_spill);
+    fn try_alloc(&mut self, func: &Function, n: usize, regs: &Vec<Register>) -> Option<Function> {
+        let mut func = func.clone();
+        let regs_to_spill = regs.iter().skip(regs.len() - n).copied();
+        self.spiller.rewrite(&mut func, regs_to_spill.collect());
 
-        let regs = regs
-            .iter()
-            .rev()
-            .skip(n)
-            .rev()
-            .chain(self.spiller.spilled_regs())
-            .cloned()
-            .collect::<Vec<_>>();
+        let spilled = self.spiller.spilled_regs();
+        let regs = regs.iter().take(regs.len() - n);
+        let regs = spilled.iter().chain(regs).copied();
 
-        if self.select(&function, regs).is_err() {
-            return Err(());
+        if self.try_select(&func, regs.collect()).is_err() {
+            return None;
         }
 
-        self.reg_map.rewrite(&mut function);
-        Ok(function)
+        self.reg_map.rewrite(&mut func);
+        Some(func)
+    }
+
+    fn allocate(&self, func: &mut Function) {
+        let regs = regs_by_cost(func);
+
+        for i in 0..=regs.len() {
+            let new_func = self.clone().try_alloc(func, i, &regs);
+
+            if let Some(new_func) = new_func {
+                *func = new_func;
+                return;
+            }
+        }
+
+        panic!("failed to allocate registers");
     }
 }
 
 pub fn allocate_registers(function: &mut Function, target: &dyn Target) {
-    let regs = regs_by_cost(function);
-
-    for i in 0..=regs.len() {
-        let mut allocator = RegAllocBasic::new(target);
-
-        if let Ok(f) = allocator.allocate(function, i, &regs) {
-            *function = f;
-            return;
-        }
-    }
-
-    panic!("failed to allocate registers");
+    RegisterAllocator::new(target).allocate(function);
 }
