@@ -245,38 +245,22 @@ impl std::fmt::Display for Label {
 impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Instruction::Alloc(slot, ty, count) => write!(f, "{} = alloc.{} {}", slot, ty, count),
-            Instruction::Load(reg, ptr) => write!(f, "{} = load.{} {}", reg, reg.ty, ptr),
-            Instruction::Store(ty, ptr, value) => write!(f, "store.{} {}, {}", ty, ptr, value),
-            Instruction::Mov(reg, value) => write!(f, "{}: {} = {}", reg, reg.ty, value),
-            Instruction::Add(reg, lhs, rhs) => {
-                write!(f, "{} = add.{} {}, {}", reg, reg.ty, lhs, rhs)
-            }
-            Instruction::Sub(reg, lhs, rhs) => {
-                write!(f, "{} = sub.{} {}, {}", reg, reg.ty, lhs, rhs)
-            }
-            Instruction::Mul(reg, lhs, rhs) => {
-                write!(f, "{} = mul.{} {}, {}", reg, reg.ty, lhs, rhs)
-            }
-            Instruction::Div(reg, lhs, rhs) => {
-                write!(f, "{} = div.{} {}, {}", reg, reg.ty, lhs, rhs)
-            }
+            Instruction::Alloc(slot, ty, 1) => write!(f, "{} = alloc {}", slot, ty),
+            Instruction::Alloc(slot, ty, count) => write!(f, "{} = alloc {} {}", slot, ty, count),
+            Instruction::Load(reg, ptr) => write!(f, "{} = load {} {}", reg, reg.ty, ptr),
+            Instruction::Store(ty, ptr, value) => write!(f, "store {} {}, {}", ty, ptr, value),
+            Instruction::Mov(reg, value) if reg.ty == Type::I32 => write!(f, "{} = {}", reg, value),
+            Instruction::Mov(reg, value) => write!(f, "{} = {}{}", reg, value, reg.ty),
+            Instruction::Add(reg, lhs, rhs) => write!(f, "{} = add {}, {}", reg, lhs, rhs),
+            Instruction::Sub(reg, lhs, rhs) => write!(f, "{} = sub {}, {}", reg, lhs, rhs),
+            Instruction::Mul(reg, lhs, rhs) => write!(f, "{} = mul {}, {}", reg, lhs, rhs),
+            Instruction::Div(reg, lhs, rhs) => write!(f, "{} = div {}, {}", reg, lhs, rhs),
             Instruction::Label(label) => write!(f, "{}:", label),
             Instruction::Jump(label) => write!(f, "jmp {}", label),
-            Instruction::Branch(cond, if_true, if_false) => {
-                if let Some(if_false) = if_false {
-                    write!(f, "br {}, {}, {}", cond, if_true, if_false)
-                } else {
-                    write!(f, "br {}, {}", cond, if_true)
-                }
-            }
-            Instruction::Ret(value) => {
-                if let Some(value) = value {
-                    write!(f, "ret {}", value)
-                } else {
-                    write!(f, "ret")
-                }
-            }
+            Instruction::Branch(cond, l1, None) => write!(f, "br {}, {}", cond, l1),
+            Instruction::Branch(cond, l1, Some(l2)) => write!(f, "br {}, {}, {}", cond, l1, l2),
+            Instruction::Ret(None) => write!(f, "ret"),
+            Instruction::Ret(Some(value)) => write!(f, "ret {}", value),
         }
     }
 }
