@@ -77,6 +77,7 @@ enum X86Instruction {
     Mov(Register, Register),
     Add(Register, Register),
     Sub(Register, Register),
+    Xor(Register, Register),
     Imul(Register, Register),
     ImulImm(Register, Register, i128),
     Cbw,
@@ -158,6 +159,7 @@ impl std::fmt::Display for X86Instruction {
             X86Instruction::Mov(r1, r2) => write!(f, "mov {}, {}", reg(r1), reg(r2)),
             X86Instruction::Add(r1, r2) => write!(f, "add {}, {}", reg(r1), reg(r2)),
             X86Instruction::Sub(r1, r2) => write!(f, "sub {}, {}", reg(r1), reg(r2)),
+            X86Instruction::Xor(r1, r2) => write!(f, "xor {}, {}", reg(r1), reg(r2)),
             X86Instruction::Imul(r1, r2) => write!(f, "imul {}, {}", reg(r1), reg(r2)),
             X86Instruction::ImulImm(r1, r2, imm) => {
                 write!(f, "imul {}, {}, {}", reg(r1), reg(r2), imm)
@@ -628,16 +630,17 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
 }
 
 fn peephole_optimize(instrs: &[X86Instruction]) -> Vec<X86Instruction> {
-    let mut optimized = Vec::new();
+    let mut opt = Vec::new();
 
     for &instr in instrs {
         match instr {
             X86Instruction::Mov(dst, src) if dst == src => continue,
+            X86Instruction::MovImm(dst, 0) => opt.push(X86Instruction::Xor(dst, dst)),
             X86Instruction::AddImm(_, 0) => continue,
             X86Instruction::SubImm(_, 0) => continue,
-            _ => optimized.push(instr),
+            _ => opt.push(instr),
         }
     }
 
-    optimized
+    opt
 }
