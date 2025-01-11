@@ -14,15 +14,17 @@ pub mod spiller;
 
 #[derive(Debug, Clone)]
 struct RegisterAllocator {
+    function: Function,
     reg_pool: RegisterPool,
     reg_map: RegisterMap,
     spiller: Spiller,
 }
 
 impl RegisterAllocator {
-    fn new(target: &dyn Target) -> Self {
+    fn new(func: &Function, target: &dyn Target) -> Self {
         Self {
-            reg_pool: RegisterPool::new(target),
+            function: func.clone(),
+            reg_pool: RegisterPool::new(func, target),
             reg_map: RegisterMap::new(),
             spiller: Spiller::new(),
         }
@@ -52,8 +54,8 @@ impl RegisterAllocator {
         Ok(())
     }
 
-    fn try_alloc(&mut self, func: &Function, n: usize, regs: &Vec<Register>) -> Option<Function> {
-        let mut func = func.clone();
+    fn try_alloc(&mut self, n: usize, regs: &Vec<Register>) -> Option<Function> {
+        let mut func = self.function.clone();
         let regs_to_spill = regs.iter().skip(regs.len() - n).copied();
         self.spiller.rewrite(&mut func, regs_to_spill.collect());
 
@@ -69,15 +71,14 @@ impl RegisterAllocator {
         Some(func)
     }
 
-    fn allocate(&self, func: &mut Function) {
-        let regs = regs_by_cost(func);
+    fn alloc(self) -> Function {
+        let regs = regs_by_cost(&self.function);
 
         for i in 0..=regs.len() {
-            let new_func = self.clone().try_alloc(func, i, &regs);
+            let new_func = self.clone().try_alloc(i, &regs);
 
             if let Some(new_func) = new_func {
-                *func = new_func;
-                return;
+                return new_func;
             }
         }
 
@@ -86,5 +87,5 @@ impl RegisterAllocator {
 }
 
 pub fn allocate_registers(function: &mut Function, target: &dyn Target) {
-    RegisterAllocator::new(target).allocate(function);
+    *function = RegisterAllocator::new(function, target).alloc();
 }

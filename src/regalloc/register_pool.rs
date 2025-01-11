@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    function::Function,
     instruction::{RegisterId, Type},
     target::{RegisterKind, Target, TargetRegisterInfo},
 };
@@ -14,10 +15,19 @@ pub struct RegisterPool {
 }
 
 impl RegisterPool {
-    pub fn new(target: &dyn Target) -> Self {
+    pub fn new(function: &Function, target: &dyn Target) -> Self {
+        let mut liveness = HashMap::new();
+
+        for (i, instr) in function.instrs.iter().enumerate() {
+            for &id in target.get_clobbered_registers(*instr) {
+                let intervals = liveness.entry(id).or_insert_with(HashSet::new);
+                intervals.insert(LiveInterval::new(i, i));
+            }
+        }
+
         Self {
             registers: target.registers(),
-            liveness: HashMap::new(),
+            liveness,
         }
     }
 

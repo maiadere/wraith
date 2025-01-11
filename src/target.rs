@@ -1,9 +1,14 @@
-use crate::instruction::{RegisterId, Type};
+use crate::{
+    instruction::{Instruction, RegisterId, Type},
+    module::Module,
+};
 
 pub mod x86;
 
 pub trait Target {
     fn registers(&self) -> TargetRegisterInfo;
+    fn compile(&self, module: &Module);
+    fn get_clobbered_registers(&self, instr: Instruction) -> &[RegisterId];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,5 +109,15 @@ impl TargetRegisterInfo {
 
     pub fn find(&self, id: RegisterId) -> Option<&PhysicalRegister> {
         self.regs.iter().find(|r| r.id == id)
+    }
+
+    pub fn is_caller_saved(&self, id: RegisterId) -> bool {
+        self.find(id)
+            .map_or(false, |r| r.kind == RegisterKind::CallerSaved)
+    }
+
+    pub fn is_callee_saved(&self, id: RegisterId) -> bool {
+        self.find(id)
+            .map_or(false, |r| r.kind == RegisterKind::CalleeSaved)
     }
 }

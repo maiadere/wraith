@@ -1,4 +1,9 @@
-use wraith::{instruction::Type, module::Module, regalloc::allocate_registers, target::x86::X86};
+use wraith::{
+    instruction::Type,
+    module::Module,
+    regalloc::allocate_registers,
+    target::{x86::X86, Target},
+};
 
 fn main() {
     let mut module = Module::new();
@@ -9,9 +14,10 @@ fn main() {
     let a = main.add(Type::I32, x, y);
     let b = main.sub(Type::I32, x, y);
     let c = main.mul(Type::I32, a, b);
-    main.ret(Some(c));
+    let d = main.sub(Type::I32, c, x);
+    let e = main.mul(Type::I32, d, d);
+    main.ret(Some(e));
 
-    print!("\n{}", main);
     allocate_registers(main, &X86);
-    print!("\n{}", main);
+    X86.compile(&module);
 }

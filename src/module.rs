@@ -2,7 +2,7 @@ use crate::{function::Function, instruction::Type};
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    functions: Vec<Function>,
+    pub functions: Vec<Function>,
 }
 
 impl Module {
