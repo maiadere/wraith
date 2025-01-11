@@ -74,10 +74,17 @@ impl Function {
         reg
     }
 
-    pub fn div(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+    pub fn sdiv(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
         let reg = self.new_register(ty);
         self.instrs
-            .push(Instruction::Div(reg, lhs.into(), rhs.into()));
+            .push(Instruction::Sdiv(reg, lhs.into(), rhs.into()));
+        reg
+    }
+
+    pub fn udiv(&mut self, ty: Type, lhs: impl Into<Value>, rhs: impl Into<Value>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs
+            .push(Instruction::Udiv(reg, lhs.into(), rhs.into()));
         reg
     }
 

@@ -120,7 +120,8 @@ pub enum Instruction {
     Add(Register, Value, Value),
     Sub(Register, Value, Value),
     Mul(Register, Value, Value),
-    Div(Register, Value, Value),
+    Sdiv(Register, Value, Value),
+    Udiv(Register, Value, Value),
     Label(Label),
     Jump(Label),
     Branch(Register, Label, Option<Label>),
@@ -150,7 +151,8 @@ impl Instruction {
             Instruction::Add(_, lhs, rhs)
             | Instruction::Sub(_, lhs, rhs)
             | Instruction::Mul(_, lhs, rhs)
-            | Instruction::Div(_, lhs, rhs) => {
+            | Instruction::Sdiv(_, lhs, rhs)
+            | Instruction::Udiv(_, lhs, rhs) => {
                 if let Value::Register(reg) = lhs {
                     regs.push(*reg);
                 }
@@ -177,7 +179,8 @@ impl Instruction {
             Instruction::Add(reg, _, _)
             | Instruction::Sub(reg, _, _)
             | Instruction::Mul(reg, _, _)
-            | Instruction::Div(reg, _, _) => Some(*reg),
+            | Instruction::Sdiv(reg, _, _)
+            | Instruction::Udiv(reg, _, _) => Some(*reg),
             _ => None,
         }
     }
@@ -254,7 +257,8 @@ impl std::fmt::Display for Instruction {
             Instruction::Add(reg, lhs, rhs) => write!(f, "{} = add {}, {}", reg, lhs, rhs),
             Instruction::Sub(reg, lhs, rhs) => write!(f, "{} = sub {}, {}", reg, lhs, rhs),
             Instruction::Mul(reg, lhs, rhs) => write!(f, "{} = mul {}, {}", reg, lhs, rhs),
-            Instruction::Div(reg, lhs, rhs) => write!(f, "{} = div {}, {}", reg, lhs, rhs),
+            Instruction::Sdiv(reg, lhs, rhs) => write!(f, "{} = sdiv {}, {}", reg, lhs, rhs),
+            Instruction::Udiv(reg, lhs, rhs) => write!(f, "{} = udiv {}, {}", reg, lhs, rhs),
             Instruction::Label(label) => write!(f, "{}:", label),
             Instruction::Jump(label) => write!(f, "jmp {}", label),
             Instruction::Branch(cond, l1, None) => write!(f, "br {}, {}", cond, l1),

@@ -53,7 +53,8 @@ impl RegisterMap {
             Instruction::Add(register, lhs, rhs)
             | Instruction::Sub(register, lhs, rhs)
             | Instruction::Mul(register, lhs, rhs)
-            | Instruction::Div(register, lhs, rhs) => {
+            | Instruction::Sdiv(register, lhs, rhs)
+            | Instruction::Udiv(register, lhs, rhs) => {
                 self.replace_register(register);
                 self.replace_value(lhs);
                 self.replace_value(rhs);
