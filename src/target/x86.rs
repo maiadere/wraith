@@ -8,8 +8,8 @@ use crate::{
     module::Module,
 };
 
-use std::collections::HashMap;
 use std::fmt::Write;
+use std::{collections::HashMap, ops::RangeFrom};
 
 use super::{RegisterKind::*, Target, TargetRegisterInfo};
 
@@ -167,9 +167,9 @@ impl std::fmt::Display for X86Instruction {
             X86Instruction::Idiv(register) => write!(f, "idiv {}", reg(register)),
             X86Instruction::Div(register) => write!(f, "div {}", reg(register)),
             X86Instruction::Test(r1, r2) => write!(f, "test {}, {}", reg(r1), reg(r2)),
-            X86Instruction::Label(label) => write!(f, "L{}:", label.id),
-            X86Instruction::Jmp(label) => write!(f, "jmp L{}", label.id),
-            X86Instruction::Jcc(x86_cc, label) => write!(f, "j{} L{}", x86_cc, label.id),
+            X86Instruction::Label(label) => write!(f, ".L{}:", label.id),
+            X86Instruction::Jmp(label) => write!(f, "jmp .L{}", label.id),
+            X86Instruction::Jcc(x86_cc, label) => write!(f, "j{} .L{}", x86_cc, label.id),
             X86Instruction::Ret => write!(f, "ret"),
             X86Instruction::Leave => write!(f, "leave"),
             X86Instruction::Cbw => write!(f, "cbw"),
@@ -203,12 +203,16 @@ impl X86Function {
 
 struct X86Module {
     functions: Vec<X86Function>,
+    lbl_id: RangeFrom<usize>,
+    local_labels: HashMap<Label, Label>,
 }
 
 impl X86Module {
     fn new() -> Self {
         Self {
             functions: Vec::new(),
+            lbl_id: 0..,
+            local_labels: HashMap::new(),
         }
     }
 
@@ -224,9 +228,17 @@ impl X86Module {
         println!("{}", self.emit_asm().unwrap());
     }
 
+    fn label(&mut self, label: Label) -> Label {
+        *self.local_labels.entry(label).or_insert_with(|| Label {
+            id: self.lbl_id.next().expect("ran out of label IDs"),
+        })
+    }
+
     fn compile_function(&mut self, func: &Function) {
         let mut used_regs = vec![];
         let mut x86_func = X86Function::new(func.name.clone());
+
+        self.local_labels.clear();
 
         for &instr in &func.instrs {
             for reg in instr.used_regs() {
@@ -511,15 +523,16 @@ impl X86Module {
                 Instruction::Sdiv(..) => todo!(),
                 Instruction::Udiv(..) => todo!(),
 
-                Instruction::Label(label) => x86_func.push(X86Instruction::Label(label)),
-                Instruction::Jump(label) => x86_func.push(X86Instruction::Jmp(label)),
-                Instruction::Branch(register, if_true, iff) => {
+                Instruction::Label(lbl) => x86_func.push(X86Instruction::Label(self.label(lbl))),
+                Instruction::Jump(lbl) => x86_func.push(X86Instruction::Jmp(self.label(lbl))),
+                Instruction::Branch(register, ift, iff) => {
                     x86_func.push(X86Instruction::Test(register, register));
-                    x86_func.push(X86Instruction::Jcc(X86Condition::NotZero, if_true));
-                    if let Some(if_false) = iff {
-                        x86_func.push(X86Instruction::Jmp(if_false));
+                    x86_func.push(X86Instruction::Jcc(X86Condition::NotZero, self.label(ift)));
+                    if let Some(iff) = iff {
+                        x86_func.push(X86Instruction::Jmp(self.label(iff)));
                     }
                 }
+
                 Instruction::Ret(Some(Value::Constant(imm))) => {
                     let imm = const_to_bits(func.ty, imm);
                     x86_func.push(X86Instruction::MovImm(Register::new(EAX, func.ty), imm));
@@ -551,7 +564,11 @@ impl X86Module {
             writeln!(asm, "{}:", func.name)?;
 
             for &instr in &func.instrs {
-                writeln!(asm, "\t{}", instr)?;
+                if let X86Instruction::Label(_) = instr {
+                    writeln!(asm, "{}", instr)?;
+                } else {
+                    writeln!(asm, "\t{}", instr)?;
+                }
             }
         }
 

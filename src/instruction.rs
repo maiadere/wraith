@@ -106,7 +106,7 @@ impl Into<Pointer> for Register {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Label {
     pub id: usize,
 }
