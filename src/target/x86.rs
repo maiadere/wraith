@@ -16,25 +16,27 @@ use super::{RegisterKind::*, Target, TargetRegisterInfo};
 pub struct X86;
 
 const EAX: RegisterId = 0;
-const EBX: RegisterId = 1;
-const ECX: RegisterId = 2;
-const EDX: RegisterId = 3;
-const ESI: RegisterId = 4;
-const EDI: RegisterId = 5;
-const EBP: RegisterId = 6;
-const ESP: RegisterId = 7;
+const ECX: RegisterId = 1;
+const EDX: RegisterId = 2;
+const EBX: RegisterId = 3;
+const ESP: RegisterId = 4;
+const EBP: RegisterId = 5;
+const ESI: RegisterId = 6;
+const EDI: RegisterId = 7;
 
 impl Target for X86 {
     fn registers(&self) -> TargetRegisterInfo {
         let mut regs = TargetRegisterInfo::new();
 
-        for i in [EAX, ECX, EDX] {
-            regs.add(i, I8 | I16 | I32, CallerSaved);
-        }
+        // caller saved
+        regs.add(EAX, I8 | I16 | I32, CallerSaved);
+        regs.add(ECX, I8 | I16 | I32, CallerSaved);
+        regs.add(EDX, I8 | I16 | I32, CallerSaved);
 
-        for i in [EBX, ESI, EDI] {
-            regs.add(i, I8 | I16 | I32, CalleeSaved);
-        }
+        // callee saved
+        regs.add(EBX, I8 | I16 | I32, CalleeSaved);
+        regs.add(ESI, I16 | I32, CalleeSaved);
+        regs.add(EDI, I16 | I32, CalleeSaved);
 
         // allow i64, f32, or f64 virtual regs to stay virtual
         // for spilling without IR's load/store instructions
@@ -594,21 +596,24 @@ fn const_to_bits(ty: Type, imm: Constant) -> i128 {
 }
 
 fn reg(register: Register) -> String {
-    [
-        ["eax", "ax", "al"],
-        ["ebx", "bx", "bl"],
-        ["ecx", "cx", "cl"],
-        ["edx", "dx", "dl"],
-        ["esi", "si", "sil"],
-        ["edi", "di", "dil"],
-        ["ebp", "bp", "bpl"],
-        ["esp", "sp", "spl"],
-    ][register.id][match register.ty {
+    let i = match register.ty {
         I32 => 0,
         I16 => 1,
         I8 => 2,
-        _ => unreachable!(),
-    }]
+        _ => unreachable!("unsupported register type: {}", register.ty),
+    };
+
+    match register.id {
+        EAX => ["eax", "ax", "al"][i],
+        ECX => ["ecx", "cx", "cl"][i],
+        EDX => ["edx", "dx", "dl"][i],
+        EBX => ["ebx", "bx", "bl"][i],
+        ESP => ["esp", "sp"][i],
+        EBP => ["ebp", "bp"][i],
+        ESI => ["esi", "si"][i],
+        EDI => ["edi", "di"][i],
+        _ => unreachable!("unsupported register id: {}", register.id),
+    }
     .to_string()
 }
 
