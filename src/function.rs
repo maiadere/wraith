@@ -3,9 +3,43 @@ use std::ops::RangeFrom;
 use crate::instruction::{Instruction, Label, MemorySlot, Pointer, Register, Type, Value};
 
 #[derive(Debug, Clone)]
-pub struct Function {
+pub struct FunctionDecl {
     pub name: String,
     pub ty: Type,
+    pub params: Vec<Register>,
+    pub variadic: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalFunction {
+    pub decl: FunctionDecl,
+}
+
+impl ExternalFunction {
+    pub fn new(name: String, ty: Type) -> Self {
+        Self {
+            decl: FunctionDecl {
+                name,
+                ty,
+                params: Vec::new(),
+                variadic: false,
+            },
+        }
+    }
+
+    pub fn add_param(&mut self, ty: Type) {
+        let i = self.decl.params.len();
+        self.decl.params.push(Register::new(i, ty));
+    }
+
+    pub fn set_variadic(&mut self, variadic: bool) {
+        self.decl.variadic = variadic;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub decl: FunctionDecl,
     pub instrs: Vec<Instruction>,
     pub(crate) reg_id: RangeFrom<usize>,
     pub(crate) lbl_id: RangeFrom<usize>,
@@ -14,8 +48,12 @@ pub struct Function {
 impl Function {
     pub fn new(name: String, ty: Type) -> Self {
         Self {
-            name,
-            ty,
+            decl: FunctionDecl {
+                name,
+                ty,
+                params: Vec::new(),
+                variadic: false,
+            },
             instrs: Vec::new(),
             reg_id: 0..,
             lbl_id: 0..,
@@ -28,6 +66,16 @@ impl Function {
 
     pub(crate) fn new_memory_slot(&mut self) -> MemorySlot {
         MemorySlot::new(self.reg_id.next().expect("ran out of memory slot IDs"))
+    }
+
+    pub fn add_param(&mut self, ty: Type) -> Register {
+        let param = self.new_register(ty);
+        self.decl.params.push(param);
+        param
+    }
+
+    pub fn set_variadic(&mut self, variadic: bool) {
+        self.decl.variadic = variadic;
     }
 
     pub fn alloc(&mut self, ty: Type, count: usize) -> MemorySlot {
@@ -118,9 +166,32 @@ impl Function {
     }
 }
 
+impl std::fmt::Display for FunctionDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn {}(", self.name)?;
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", param, param.ty)?;
+        }
+        if self.variadic {
+            write!(f, ", ...")?;
+        }
+        write!(f, ") -> {}", self.ty)
+    }
+}
+
+impl std::fmt::Display for ExternalFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "extern {}", self.decl)?;
+        Ok(())
+    }
+}
+
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "fn {}() -> {} {{", self.name, self.ty)?;
+        writeln!(f, "{} {{", self.decl)?;
         for instr in &self.instrs {
             if let Instruction::Label(label) = instr {
                 writeln!(f, "{}:", label)?;

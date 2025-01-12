@@ -19,7 +19,7 @@ impl RegisterPool {
         let mut liveness = HashMap::new();
 
         for (i, instr) in function.instrs.iter().enumerate() {
-            for &id in target.get_clobbered_registers(*instr) {
+            for &id in target.get_clobbered_registers(instr) {
                 let intervals = liveness.entry(id).or_insert_with(HashSet::new);
                 intervals.insert(LiveInterval::new(i, i));
             }

@@ -1,5 +1,6 @@
 use crate::{
     function::Function,
+    global_var::GlobalVarKind,
     instruction::{
         Constant, Instruction, Label, MemorySlot, Pointer, Register, RegisterId,
         Type::{self, *},
@@ -48,7 +49,7 @@ impl Target for X86 {
         X86Module::new().compile(module);
     }
 
-    fn get_clobbered_registers(&self, instr: Instruction) -> &[RegisterId] {
+    fn get_clobbered_registers(&self, instr: &Instruction) -> &[RegisterId] {
         match instr {
             Instruction::Sdiv(dst, ..) | Instruction::Udiv(dst, ..) => match dst.ty {
                 Void => unreachable!(),
@@ -61,14 +62,17 @@ impl Target for X86 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum X86Instruction {
     LoadReg(Register, Register),
     LoadMem(Register, i128),
+    LoadGlobal(Register, String),
     StoreRegReg(Register, Register),
     StoreRegImm(Type, Register, i128),
     StoreMemReg(i128, Register),
     StoreMemImm(Type, i128, i128),
+    StoreGlobalReg(String, Register),
+    StoreGlobalImm(Type, String, i128),
     PushImm(i128),
     MovImm(Register, i128),
     AddImm(Register, i128),
@@ -132,12 +136,15 @@ fn type_ptr(ty: Type) -> &'static str {
 
 impl std::fmt::Display for X86Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
+        match self.clone() {
             X86Instruction::LoadReg(r1, r2) => {
                 write!(f, "mov {}, [{}]", reg(r1), reg(r2))
             }
             X86Instruction::LoadMem(register, offset) => {
                 write!(f, "mov {}, [ebp - {}]", reg(register), offset)
+            }
+            X86Instruction::LoadGlobal(register, name) => {
+                write!(f, "mov {}, [{}]", reg(register), name)
             }
             X86Instruction::StoreRegReg(r1, r2) => {
                 write!(f, "mov [{}], {}", reg(r1), reg(r2))
@@ -150,6 +157,12 @@ impl std::fmt::Display for X86Instruction {
             }
             X86Instruction::StoreMemImm(ty, offset, imm) => {
                 write!(f, "mov {} [ebp - {}], {}", type_ptr(ty), offset, imm)
+            }
+            X86Instruction::StoreGlobalReg(name, register) => {
+                write!(f, "mov [{}], {}", name, reg(register))
+            }
+            X86Instruction::StoreGlobalImm(ty, name, imm) => {
+                write!(f, "mov {} [{}], {}", type_ptr(ty), name, imm)
             }
             X86Instruction::PushImm(imm) => write!(f, "push {}", imm),
             X86Instruction::MovImm(register, imm) => write!(f, "mov {}, {}", reg(register), imm),
@@ -207,6 +220,7 @@ struct X86Module {
     functions: Vec<X86Function>,
     lbl_id: RangeFrom<usize>,
     local_labels: HashMap<Label, Label>,
+    global_var_symbols: HashMap<String, String>,
 }
 
 impl X86Module {
@@ -215,10 +229,25 @@ impl X86Module {
             functions: Vec::new(),
             lbl_id: 0..,
             local_labels: HashMap::new(),
+            global_var_symbols: HashMap::new(),
         }
     }
 
     fn compile(&mut self, module: &Module) {
+        for var in &module.global_vars {
+            let symbol = match var.kind {
+                GlobalVarKind::Public => var.name.clone(),
+                GlobalVarKind::Private => format!(".L{}", var.name),
+                GlobalVarKind::Const => format!(".LC{}", var.name),
+            };
+            self.global_var_symbols.insert(var.name.clone(), symbol);
+        }
+
+        for var in &module.external_vars {
+            self.global_var_symbols
+                .insert(var.name.clone(), var.name.clone());
+        }
+
         for func in &module.functions {
             self.compile_function(func);
         }
@@ -227,7 +256,7 @@ impl X86Module {
             func.instrs = peephole_optimize(&func.instrs);
         }
 
-        println!("{}", self.emit_asm().unwrap());
+        println!("{}", self.emit_asm(&module).unwrap());
     }
 
     fn label(&mut self, label: Label) -> Label {
@@ -238,11 +267,11 @@ impl X86Module {
 
     fn compile_function(&mut self, func: &Function) {
         let mut used_regs = vec![];
-        let mut x86_func = X86Function::new(func.name.clone());
+        let mut x86_func = X86Function::new(func.decl.name.clone());
 
         self.local_labels.clear();
 
-        for &instr in &func.instrs {
+        for instr in &func.instrs {
             for reg in instr.used_regs() {
                 if used_regs.contains(&reg.id) {
                     continue;
@@ -252,7 +281,7 @@ impl X86Module {
                 }
             }
 
-            match instr {
+            match instr.clone() {
                 Instruction::Alloc(slot, ty, count) => {
                     let size = ty.size() * count;
                     x86_func.memory_slot_offset += size as i128;
@@ -265,6 +294,10 @@ impl X86Module {
                 }
                 Instruction::Load(register, Pointer::Register(ptr)) => {
                     x86_func.push(X86Instruction::LoadReg(register, ptr));
+                }
+                Instruction::Load(register, Pointer::GlobalVar(name)) => {
+                    let symbol = self.global_var_symbols.get(&name).unwrap().clone();
+                    x86_func.push(X86Instruction::LoadGlobal(register, symbol));
                 }
                 Instruction::Store(ty, Pointer::MemorySlot(ptr), Value::Constant(imm)) => {
                     let imm = const_to_bits(ty, imm);
@@ -281,6 +314,15 @@ impl X86Module {
                 }
                 Instruction::Store(_, Pointer::Register(ptr), Value::Register(register)) => {
                     x86_func.push(X86Instruction::StoreRegReg(ptr, register));
+                }
+                Instruction::Store(ty, Pointer::GlobalVar(name), Value::Constant(imm)) => {
+                    let symbol = self.global_var_symbols.get(&name).unwrap().clone();
+                    let imm = const_to_bits(ty, imm);
+                    x86_func.push(X86Instruction::StoreGlobalImm(ty, symbol, imm));
+                }
+                Instruction::Store(_, Pointer::GlobalVar(name), Value::Register(register)) => {
+                    let symbol = self.global_var_symbols.get(&name).unwrap().clone();
+                    x86_func.push(X86Instruction::StoreGlobalReg(symbol, register));
                 }
                 Instruction::Mov(r1, Value::Register(r2)) => {
                     x86_func.push(X86Instruction::Mov(r1, r2));
@@ -536,8 +578,9 @@ impl X86Module {
                 }
 
                 Instruction::Ret(Some(Value::Constant(imm))) => {
-                    let imm = const_to_bits(func.ty, imm);
-                    x86_func.push(X86Instruction::MovImm(Register::new(EAX, func.ty), imm));
+                    let ty = func.decl.ty;
+                    let imm = const_to_bits(ty, imm);
+                    x86_func.push(X86Instruction::MovImm(Register::new(EAX, ty), imm));
                     x86_func.push(X86Instruction::Ret);
                 }
                 Instruction::Ret(Some(Value::Register(r))) => {
@@ -555,7 +598,7 @@ impl X86Module {
         self.functions.push(x86_func);
     }
 
-    fn emit_asm(&self) -> Result<String, std::fmt::Error> {
+    fn emit_asm(&self, module: &Module) -> Result<String, std::fmt::Error> {
         let mut asm = String::new();
 
         writeln!(asm, "\t.text")?;
@@ -565,12 +608,47 @@ impl X86Module {
             writeln!(asm, "\t.globl {}", func.name)?;
             writeln!(asm, "{}:", func.name)?;
 
-            for &instr in &func.instrs {
+            for instr in &func.instrs {
                 if let X86Instruction::Label(_) = instr {
                     writeln!(asm, "{}", instr)?;
                 } else {
                     writeln!(asm, "\t{}", instr)?;
                 }
+            }
+        }
+
+        let mut current_section = None;
+
+        for var in &module.global_vars {
+            let section = match var.kind {
+                GlobalVarKind::Public | GlobalVarKind::Private => ".data",
+                GlobalVarKind::Const => ".section .rodata",
+            };
+
+            if current_section != Some(section) {
+                current_section = Some(section);
+                writeln!(asm, "\t{}", section)?;
+            }
+
+            if let GlobalVarKind::Public = var.kind {
+                writeln!(asm, "\t.globl {}", var.name)?;
+            }
+
+            writeln!(asm, "{}:", self.global_var_symbols.get(&var.name).unwrap())?;
+
+            for (ty, imm) in &var.data {
+                let directive = match ty {
+                    I8 => ".byte",
+                    I16 => ".short",
+                    I32 => ".int",
+                    I64 => ".quad",
+                    F32 => ".float",
+                    F64 => ".double",
+                    Void => unreachable!(),
+                };
+
+                let imm = const_to_bits(*ty, *imm);
+                writeln!(asm, "\t{} {}", directive, imm)?;
             }
         }
 
@@ -634,7 +712,7 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
         instrs.push(X86Instruction::Push(Register::new(id, I32)));
     }
 
-    for &instr in &x86_func.instrs {
+    for instr in &x86_func.instrs {
         if let X86Instruction::Ret = instr {
             if stack_size != 0 {
                 instrs.push(X86Instruction::Leave);
@@ -645,7 +723,7 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
             }
         }
 
-        instrs.push(instr);
+        instrs.push(instr.clone());
     }
 
     x86_func.instrs = instrs;
@@ -654,13 +732,13 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
 fn peephole_optimize(instrs: &[X86Instruction]) -> Vec<X86Instruction> {
     let mut opt = Vec::new();
 
-    for &instr in instrs {
+    for instr in instrs {
         match instr {
             X86Instruction::Mov(dst, src) if dst == src => continue,
-            X86Instruction::MovImm(dst, 0) => opt.push(X86Instruction::Xor(dst, dst)),
+            X86Instruction::MovImm(dst, 0) => opt.push(X86Instruction::Xor(*dst, *dst)),
             X86Instruction::AddImm(_, 0) => continue,
             X86Instruction::SubImm(_, 0) => continue,
-            _ => opt.push(instr),
+            _ => opt.push(instr.clone()),
         }
     }
 

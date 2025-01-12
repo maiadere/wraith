@@ -88,10 +88,11 @@ impl Into<Value> for f64 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Pointer {
     MemorySlot(MemorySlot),
     Register(Register),
+    GlobalVar(String),
 }
 
 impl Into<Pointer> for MemorySlot {
@@ -111,7 +112,7 @@ pub struct Label {
     pub id: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     Alloc(MemorySlot, Type, usize),
     Load(Register, Pointer),
@@ -235,6 +236,7 @@ impl std::fmt::Display for Pointer {
         match self {
             Pointer::MemorySlot(slot) => write!(f, "{}", slot),
             Pointer::Register(register) => write!(f, "{}", register),
+            Pointer::GlobalVar(name) => write!(f, "{}", name),
         }
     }
 }

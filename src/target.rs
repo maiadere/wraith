@@ -8,7 +8,7 @@ pub mod x86;
 pub trait Target {
     fn registers(&self) -> TargetRegisterInfo;
     fn compile(&self, module: &Module);
-    fn get_clobbered_registers(&self, instr: Instruction) -> &[RegisterId];
+    fn get_clobbered_registers(&self, instr: &Instruction) -> &[RegisterId];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
