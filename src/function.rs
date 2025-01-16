@@ -95,6 +95,12 @@ impl Function {
             .push(Instruction::Store(ty, ptr.into(), value.into()));
     }
 
+    pub fn lea(&mut self, ty: Type, ptr: impl Into<Pointer>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs.push(Instruction::Lea(reg, ptr.into()));
+        reg
+    }
+
     pub fn mov(&mut self, ty: Type, value: impl Into<Value>) -> Register {
         let reg = self.new_register(ty);
         self.instrs.push(Instruction::Mov(reg, value.into()));
@@ -133,6 +139,17 @@ impl Function {
         let reg = self.new_register(ty);
         self.instrs
             .push(Instruction::Udiv(reg, lhs.into(), rhs.into()));
+        reg
+    }
+
+    pub fn call(&mut self, ty: Type, name: impl Into<String>, args: Vec<Register>) -> Register {
+        let reg = self.new_register(ty);
+        self.instrs.push(Instruction::Call(
+            reg,
+            name.into(),
+            args.into_iter().map(Into::into).collect(),
+            false,
+        ));
         reg
     }
 

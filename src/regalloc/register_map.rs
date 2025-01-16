@@ -41,10 +41,13 @@ impl RegisterMap {
                 self.replace_register(register);
                 self.replace_pointer(pointer);
             }
-
             Instruction::Store(_, pointer, value) => {
                 self.replace_pointer(pointer);
                 self.replace_value(value);
+            }
+            Instruction::Lea(register, pointer) => {
+                self.replace_register(register);
+                self.replace_pointer(pointer);
             }
             Instruction::Mov(register, value) => {
                 self.replace_register(register);
@@ -65,7 +68,23 @@ impl RegisterMap {
             Instruction::Ret(Some(Value::Register(register))) => {
                 self.replace_register(register);
             }
-            _ => {}
+            Instruction::Push(register) => {
+                self.replace_register(register);
+            }
+            Instruction::Pop(register) => {
+                self.replace_register(register);
+            }
+            Instruction::Call(register, _, vec, _) => {
+                self.replace_register(register);
+                for reg in vec {
+                    self.replace_register(reg);
+                }
+            }
+            Instruction::Alloc(..)
+            | Instruction::Label(..)
+            | Instruction::Jump(..)
+            | Instruction::Ret(None)
+            | Instruction::Ret(Some(Value::Constant(_))) => {}
         }
     }
 

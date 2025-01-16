@@ -57,6 +57,7 @@ impl Target for X86 {
                 I16 | I32 => &[EAX, EDX],
                 I64 | F32 | F64 => todo!(),
             },
+            Instruction::Call(..) => &[EAX, ECX, EDX],
             _ => &[],
         }
     }
@@ -73,6 +74,8 @@ enum X86Instruction {
     StoreMemImm(Type, i128, i128),
     StoreGlobalReg(String, Register),
     StoreGlobalImm(Type, String, i128),
+    LeaMem(Register, i128),
+    LeaGlobal(Register, String),
     PushImm(i128),
     MovImm(Register, i128),
     AddImm(Register, i128),
@@ -95,6 +98,7 @@ enum X86Instruction {
     Label(Label),
     Jmp(Label),
     Jcc(X86Condition, Label),
+    Call(String),
     Ret,
     Leave,
 }
@@ -164,6 +168,12 @@ impl std::fmt::Display for X86Instruction {
             X86Instruction::StoreGlobalImm(ty, name, imm) => {
                 write!(f, "mov {} [{}], {}", type_ptr(ty), name, imm)
             }
+            X86Instruction::LeaMem(register, offset) => {
+                write!(f, "lea {}, [ebp - {}]", reg(register), offset)
+            }
+            X86Instruction::LeaGlobal(register, name) => {
+                write!(f, "lea {}, [{}]", reg(register), name)
+            }
             X86Instruction::PushImm(imm) => write!(f, "push {}", imm),
             X86Instruction::MovImm(register, imm) => write!(f, "mov {}, {}", reg(register), imm),
             X86Instruction::AddImm(register, imm) => write!(f, "add {}, {}", reg(register), imm),
@@ -190,6 +200,7 @@ impl std::fmt::Display for X86Instruction {
             X86Instruction::Cbw => write!(f, "cbw"),
             X86Instruction::Cwd => write!(f, "cwd"),
             X86Instruction::Cdq => write!(f, "cdq"),
+            X86Instruction::Call(name) => write!(f, "call {}", name),
         }
     }
 }
@@ -324,6 +335,21 @@ impl X86Module {
                     let symbol = self.global_var_symbols.get(&name).unwrap().clone();
                     x86_func.push(X86Instruction::StoreGlobalReg(symbol, register));
                 }
+
+                Instruction::Lea(register, Pointer::MemorySlot(slot)) => {
+                    let offset = *x86_func.memory_slots.get(&slot).unwrap();
+                    x86_func.push(X86Instruction::LeaMem(register, offset));
+                }
+
+                Instruction::Lea(register, Pointer::Register(ptr)) => {
+                    x86_func.push(X86Instruction::Mov(register, ptr));
+                }
+
+                Instruction::Lea(register, Pointer::GlobalVar(name)) => {
+                    let symbol = self.global_var_symbols.get(&name).unwrap().clone();
+                    x86_func.push(X86Instruction::LeaGlobal(register, symbol));
+                }
+
                 Instruction::Mov(r1, Value::Register(r2)) => {
                     x86_func.push(X86Instruction::Mov(r1, r2));
                 }
@@ -561,11 +587,45 @@ impl X86Module {
                     x86_func.push(X86Instruction::Mov(dst, eax));
                 }
 
+                // TODO: f32/f64/i64
+                Instruction::Push(register) => x86_func.push(X86Instruction::Push(register)),
+                Instruction::Pop(register) => x86_func.push(X86Instruction::Pop(register)),
+
                 Instruction::Add(..) => todo!(),
                 Instruction::Sub(..) => todo!(),
                 Instruction::Mul(..) => todo!(),
                 Instruction::Sdiv(..) => todo!(),
                 Instruction::Udiv(..) => todo!(),
+
+                Instruction::Call(register, name, params, _) => {
+                    if register.ty == Type::I64
+                        || register.ty == Type::F32
+                        || register.ty == Type::F64
+                    {
+                        todo!()
+                    }
+
+                    x86_func.push(X86Instruction::Call(name));
+
+                    if register.ty != Type::Void {
+                        let eax = Register::new(EAX, register.ty);
+                        x86_func.push(X86Instruction::Mov(register, eax));
+                    }
+
+                    let mut sz = 0;
+
+                    for param in params.iter().rev() {
+                        sz += match param.ty {
+                            I8 | I16 | I32 | F32 => 4,
+                            I64 | F64 => 8,
+                            _ => unreachable!(),
+                        };
+                    }
+
+                    if sz != 0 {
+                        x86_func.push(X86Instruction::AddImm(Register::new(ESP, I32), sz));
+                    }
+                }
 
                 Instruction::Label(lbl) => x86_func.push(X86Instruction::Label(self.label(lbl))),
                 Instruction::Jump(lbl) => x86_func.push(X86Instruction::Jmp(self.label(lbl))),
@@ -700,22 +760,24 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
 
     let stack_size = x86_func.memory_slot_offset;
 
-    if stack_size != 0 {
-        let ebp = Register::new(EBP, I32);
-        let esp = Register::new(ESP, I32);
-        instrs.push(X86Instruction::Push(ebp));
-        instrs.push(X86Instruction::Mov(ebp, esp));
-        instrs.push(X86Instruction::SubImm(esp, stack_size));
-    }
+    let ebp = Register::new(EBP, I32);
+    let esp = Register::new(ESP, I32);
 
     for &id in regs_to_save {
         instrs.push(X86Instruction::Push(Register::new(id, I32)));
     }
 
+    if stack_size != 0 {
+        instrs.push(X86Instruction::Push(ebp));
+        instrs.push(X86Instruction::Mov(ebp, esp));
+        instrs.push(X86Instruction::SubImm(esp, stack_size));
+    }
+
     for instr in &x86_func.instrs {
         if let X86Instruction::Ret = instr {
             if stack_size != 0 {
-                instrs.push(X86Instruction::Leave);
+                instrs.push(X86Instruction::AddImm(esp, stack_size));
+                instrs.push(X86Instruction::Pop(ebp));
             }
 
             for &id in regs_to_save.iter().rev() {

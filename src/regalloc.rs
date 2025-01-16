@@ -4,7 +4,11 @@ use register_pool::RegisterPool;
 use spill_cost::regs_by_cost;
 use spiller::Spiller;
 
-use crate::{function::Function, instruction::Register, target::Target};
+use crate::{
+    function::Function,
+    instruction::{Register, Type},
+    target::Target,
+};
 
 pub mod live_interval;
 pub mod register_map;
@@ -72,7 +76,11 @@ impl RegisterAllocator {
     }
 
     fn alloc(self) -> Function {
-        let regs = regs_by_cost(&self.function);
+        let regs = regs_by_cost(&self.function)
+            .iter()
+            .filter(|reg| reg.ty != Type::Void)
+            .copied()
+            .collect::<Vec<_>>();
 
         for i in 0..=regs.len() {
             let new_func = self.clone().try_alloc(i, &regs);
