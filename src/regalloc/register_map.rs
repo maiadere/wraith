@@ -41,6 +41,9 @@ impl RegisterMap {
                 self.replace_register(register);
                 self.replace_pointer(pointer);
             }
+            Instruction::LoadParam(register, _) => {
+                self.replace_register(register);
+            }
             Instruction::Store(_, pointer, value) => {
                 self.replace_pointer(pointer);
                 self.replace_value(value);

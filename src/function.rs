@@ -90,6 +90,12 @@ impl Function {
         reg
     }
 
+    pub fn load_param(&mut self, param: Register) -> Register {
+        let reg = self.new_register(param.ty);
+        self.instrs.push(Instruction::LoadParam(reg, param.id));
+        reg
+    }
+
     pub fn store(&mut self, ty: Type, ptr: impl Into<Pointer>, value: impl Into<Value>) {
         self.instrs
             .push(Instruction::Store(ty, ptr.into(), value.into()));

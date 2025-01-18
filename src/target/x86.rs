@@ -145,7 +145,8 @@ impl std::fmt::Display for X86Instruction {
                 write!(f, "mov {}, [{}]", reg(r1), reg(r2))
             }
             X86Instruction::LoadMem(register, offset) => {
-                write!(f, "mov {}, [ebp - {}]", reg(register), offset)
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "mov {}, [ebp {} {}]", reg(register), sign, offset.abs())
             }
             X86Instruction::LoadGlobal(register, name) => {
                 write!(f, "mov {}, [{}]", reg(register), name)
@@ -157,10 +158,13 @@ impl std::fmt::Display for X86Instruction {
                 write!(f, "mov {} [{}], {}", type_ptr(ty), reg(register), imm)
             }
             X86Instruction::StoreMemReg(offset, register) => {
-                write!(f, "mov [ebp - {}], {}", offset, reg(register))
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "mov [ebp {} {}], {}", sign, offset.abs(), reg(register))
             }
             X86Instruction::StoreMemImm(ty, offset, imm) => {
-                write!(f, "mov {} [ebp - {}], {}", type_ptr(ty), offset, imm)
+                let sign = if offset < 0 { "-" } else { "+" };
+                let offset = offset.abs();
+                write!(f, "mov {} [ebp {} {}], {}", type_ptr(ty), sign, offset, imm)
             }
             X86Instruction::StoreGlobalReg(name, register) => {
                 write!(f, "mov [{}], {}", name, reg(register))
@@ -169,7 +173,8 @@ impl std::fmt::Display for X86Instruction {
                 write!(f, "mov {} [{}], {}", type_ptr(ty), name, imm)
             }
             X86Instruction::LeaMem(register, offset) => {
-                write!(f, "lea {}, [ebp - {}]", reg(register), offset)
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "lea {}, [ebp {} {}]", reg(register), sign, offset.abs())
             }
             X86Instruction::LeaGlobal(register, name) => {
                 write!(f, "lea {}, [{}]", reg(register), name)
@@ -210,6 +215,7 @@ struct X86Function {
     instrs: Vec<X86Instruction>,
     memory_slots: HashMap<MemorySlot, i128>,
     memory_slot_offset: i128,
+    uses_params: bool,
 }
 
 impl X86Function {
@@ -219,6 +225,7 @@ impl X86Function {
             instrs: Vec::new(),
             memory_slots: HashMap::new(),
             memory_slot_offset: 0,
+            uses_params: false,
         }
     }
 
@@ -295,7 +302,7 @@ impl X86Module {
             match instr.clone() {
                 Instruction::Alloc(slot, ty, count) => {
                     let size = ty.size() * count;
-                    x86_func.memory_slot_offset += size as i128;
+                    x86_func.memory_slot_offset -= size as i128;
                     let offset = x86_func.memory_slot_offset;
                     x86_func.memory_slots.insert(slot, offset);
                 }
@@ -309,6 +316,20 @@ impl X86Module {
                 Instruction::Load(register, Pointer::GlobalVar(name)) => {
                     let symbol = self.global_var_symbols.get(&name).unwrap().clone();
                     x86_func.push(X86Instruction::LoadGlobal(register, symbol));
+                }
+                Instruction::LoadParam(register, param) => {
+                    let mut offset = 8;
+
+                    for p in &func.decl.params {
+                        if p.id == param {
+                            break;
+                        }
+
+                        offset += param_stack_size(p.ty);
+                    }
+
+                    x86_func.uses_params = true;
+                    x86_func.push(X86Instruction::LoadMem(register, offset));
                 }
                 Instruction::Store(ty, Pointer::MemorySlot(ptr), Value::Constant(imm)) => {
                     let imm = const_to_bits(ty, imm);
@@ -401,6 +422,10 @@ impl X86Module {
                 }
 
                 Instruction::Mul(dst, Value::Register(r1), Value::Register(r2)) => {
+                    let dst = Register::new(dst.id, I32);
+                    let r1 = Register::new(r1.id, I32);
+                    let r2 = Register::new(r2.id, I32);
+
                     if dst != r2 {
                         x86_func.push(X86Instruction::Mov(dst, r1));
                         x86_func.push(X86Instruction::Imul(dst, r2));
@@ -412,6 +437,8 @@ impl X86Module {
 
                 Instruction::Mul(dst, Value::Register(register), Value::Constant(imm))
                 | Instruction::Mul(dst, Value::Constant(imm), Value::Register(register)) => {
+                    let dst = Register::new(dst.id, I32);
+                    let register = Register::new(register.id, I32);
                     let imm = const_to_bits(dst.ty, imm);
                     x86_func.push(X86Instruction::ImulImm(dst, register, imm));
                 }
@@ -588,8 +615,14 @@ impl X86Module {
                 }
 
                 // TODO: f32/f64/i64
-                Instruction::Push(register) => x86_func.push(X86Instruction::Push(register)),
-                Instruction::Pop(register) => x86_func.push(X86Instruction::Pop(register)),
+                Instruction::Push(register) => {
+                    let register = Register::new(register.id, I32);
+                    x86_func.push(X86Instruction::Push(register));
+                }
+                Instruction::Pop(register) => {
+                    let register = Register::new(register.id, I32);
+                    x86_func.push(X86Instruction::Pop(register));
+                }
 
                 Instruction::Add(..) => todo!(),
                 Instruction::Sub(..) => todo!(),
@@ -615,11 +648,7 @@ impl X86Module {
                     let mut sz = 0;
 
                     for param in params.iter().rev() {
-                        sz += match param.ty {
-                            I8 | I16 | I32 | F32 => 4,
-                            I64 | F64 => 8,
-                            _ => unreachable!(),
-                        };
+                        sz += param_stack_size(param.ty);
                     }
 
                     if sz != 0 {
@@ -767,7 +796,7 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
         instrs.push(X86Instruction::Push(Register::new(id, I32)));
     }
 
-    if stack_size != 0 {
+    if stack_size != 0 || x86_func.uses_params {
         instrs.push(X86Instruction::Push(ebp));
         instrs.push(X86Instruction::Mov(ebp, esp));
         instrs.push(X86Instruction::SubImm(esp, stack_size));
@@ -775,7 +804,7 @@ fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[Registe
 
     for instr in &x86_func.instrs {
         if let X86Instruction::Ret = instr {
-            if stack_size != 0 {
+            if stack_size != 0 || x86_func.uses_params {
                 instrs.push(X86Instruction::AddImm(esp, stack_size));
                 instrs.push(X86Instruction::Pop(ebp));
             }
@@ -805,4 +834,12 @@ fn peephole_optimize(instrs: &[X86Instruction]) -> Vec<X86Instruction> {
     }
 
     opt
+}
+
+fn param_stack_size(ty: Type) -> i128 {
+    match ty {
+        I8 | I16 | I32 | F32 => 4,
+        I64 | F64 => 8,
+        _ => unreachable!(),
+    }
 }

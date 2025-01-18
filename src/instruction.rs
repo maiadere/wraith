@@ -116,6 +116,7 @@ pub struct Label {
 pub enum Instruction {
     Alloc(MemorySlot, Type, usize),
     Load(Register, Pointer),
+    LoadParam(Register, usize),
     Store(Type, Pointer, Value),
     Lea(Register, Pointer),
     Mov(Register, Value),
@@ -189,6 +190,7 @@ impl Instruction {
     pub fn defs(&self) -> Option<Register> {
         match self {
             Instruction::Load(reg, _) => Some(*reg),
+            Instruction::LoadParam(reg, _) => Some(*reg),
             Instruction::Lea(reg, _) => Some(*reg),
             Instruction::Mov(reg, _) => Some(*reg),
             Instruction::Add(reg, _, _)
@@ -269,6 +271,7 @@ impl std::fmt::Display for Instruction {
             Instruction::Alloc(slot, ty, 1) => write!(f, "{} = alloc {}", slot, ty),
             Instruction::Alloc(slot, ty, count) => write!(f, "{} = alloc {} {}", slot, ty, count),
             Instruction::Load(reg, ptr) => write!(f, "{} = load {} {}", reg, reg.ty, ptr),
+            Instruction::LoadParam(reg, param) => write!(f, "{} = load %{}", reg, param),
             Instruction::Store(ty, ptr, value) => write!(f, "store {} {}, {}", ty, ptr, value),
             Instruction::Lea(reg, ptr) => write!(f, "{} = lea {}", reg, ptr),
             Instruction::Mov(reg, value) if reg.ty == Type::I32 => write!(f, "{} = {}", reg, value),
