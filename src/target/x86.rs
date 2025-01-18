@@ -39,9 +39,16 @@ impl Target for X86 {
         regs.add(ESI, I16 | I32, CalleeSaved);
         regs.add(EDI, I16 | I32, CalleeSaved);
 
-        // allow i64, f32, or f64 virtual regs to stay virtual
-        // for spilling without IR's load/store instructions
-        regs.keep_virtual(I64 | F32 | F64);
+        // f32/f64/i64 regs
+        let mut id = 8;
+
+        for ty in [F32, F64, I64] {
+            for _ in 0..1024 {
+                regs.add(id, ty, CalleeSaved);
+                id += 1;
+            }
+        }
+
         regs
     }
 
@@ -55,7 +62,7 @@ impl Target for X86 {
                 Void => unreachable!(),
                 I8 => &[EAX],
                 I16 | I32 => &[EAX, EDX],
-                I64 | F32 | F64 => todo!(),
+                I64 | F32 | F64 => unimplemented!(),
             },
             Instruction::Call(..) => &[EAX, ECX, EDX],
             _ => &[],
@@ -76,10 +83,20 @@ enum X86Instruction {
     StoreGlobalImm(Type, String, i128),
     LeaMem(Register, i128),
     LeaGlobal(Register, String),
+    Fld(Type, i128),
+    FldReg(Type, Register),
+    FldGlobal(Type, String),
+    Fstp(Type, i128),
+    Faddp,
+    Fsubp,
+    Fmulp,
+    Fdivp,
     PushImm(i128),
     MovImm(Register, i128),
     AddImm(Register, i128),
     SubImm(Register, i128),
+    PushMem(Type, i128),
+    PopMem(Type, i128),
     Push(Register),
     Pop(Register),
     Neg(Register),
@@ -179,10 +196,34 @@ impl std::fmt::Display for X86Instruction {
             X86Instruction::LeaGlobal(register, name) => {
                 write!(f, "lea {}, [{}]", reg(register), name)
             }
+            X86Instruction::Fld(ty, offset) => {
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "fld {} [ebp {} {}]", type_ptr(ty), sign, offset.abs())
+            }
+            X86Instruction::FldReg(ty, register) => {
+                write!(f, "fld {} [{}]", type_ptr(ty), reg(register))
+            }
+            X86Instruction::FldGlobal(ty, name) => write!(f, "fld {} [{}]", type_ptr(ty), name),
+            X86Instruction::Fstp(ty, offset) => {
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "fstp {} [ebp {} {}]", type_ptr(ty), sign, offset.abs())
+            }
+            X86Instruction::Faddp => write!(f, "faddp"),
+            X86Instruction::Fsubp => write!(f, "fsubp"),
+            X86Instruction::Fmulp => write!(f, "fmulp"),
+            X86Instruction::Fdivp => write!(f, "fdivp"),
             X86Instruction::PushImm(imm) => write!(f, "push {}", imm),
             X86Instruction::MovImm(register, imm) => write!(f, "mov {}, {}", reg(register), imm),
             X86Instruction::AddImm(register, imm) => write!(f, "add {}, {}", reg(register), imm),
             X86Instruction::SubImm(register, imm) => write!(f, "sub {}, {}", reg(register), imm),
+            X86Instruction::PushMem(ty, offset) => {
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "push {} [ebp {} {}]", type_ptr(ty), sign, offset.abs())
+            }
+            X86Instruction::PopMem(ty, offset) => {
+                let sign = if offset < 0 { "-" } else { "+" };
+                write!(f, "pop {} [ebp {} {}]", type_ptr(ty), sign, offset.abs())
+            }
             X86Instruction::Push(register) => write!(f, "push {}", reg(register)),
             X86Instruction::Pop(register) => write!(f, "pop {}", reg(register)),
             X86Instruction::Neg(register) => write!(f, "neg {}", reg(register)),
@@ -216,6 +257,7 @@ struct X86Function {
     memory_slots: HashMap<MemorySlot, i128>,
     memory_slot_offset: i128,
     uses_params: bool,
+    vregs: HashMap<RegisterId, i128>,
 }
 
 impl X86Function {
@@ -226,11 +268,20 @@ impl X86Function {
             memory_slots: HashMap::new(),
             memory_slot_offset: 0,
             uses_params: false,
+            vregs: HashMap::new(),
         }
     }
 
     fn push(&mut self, instr: X86Instruction) {
         self.instrs.push(instr);
+    }
+
+    fn vreg_offset(&mut self, reg: Register) -> i128 {
+        *self.vregs.entry(reg.id).or_insert_with(|| {
+            self.memory_slot_offset -= reg.ty.size() as i128;
+            let offset = self.memory_slot_offset;
+            offset
+        })
     }
 }
 
@@ -239,6 +290,8 @@ struct X86Module {
     lbl_id: RangeFrom<usize>,
     local_labels: HashMap<Label, Label>,
     global_var_symbols: HashMap<String, String>,
+    f32_consts: Vec<u32>,
+    f64_consts: Vec<u64>,
 }
 
 impl X86Module {
@@ -248,7 +301,19 @@ impl X86Module {
             lbl_id: 0..,
             local_labels: HashMap::new(),
             global_var_symbols: HashMap::new(),
+            f32_consts: Vec::new(),
+            f64_consts: Vec::new(),
         }
+    }
+
+    fn add_f32_const(&mut self, value: f32) -> String {
+        self.f32_consts.push(value.to_bits());
+        f32_const(value)
+    }
+
+    fn add_f64_const(&mut self, value: f64) -> String {
+        self.f64_consts.push(value.to_bits());
+        f64_const(value)
     }
 
     fn compile(&mut self, module: &Module) {
@@ -306,6 +371,32 @@ impl X86Module {
                     let offset = x86_func.memory_slot_offset;
                     x86_func.memory_slots.insert(slot, offset);
                 }
+                Instruction::Load(register, ..) if register.ty == I64 => {
+                    unimplemented!()
+                }
+                Instruction::Load(register, Pointer::MemorySlot(slot))
+                    if register.ty == F32 || register.ty == F64 =>
+                {
+                    let offset = *x86_func.memory_slots.get(&slot).unwrap();
+                    x86_func.push(X86Instruction::Fld(register.ty, offset));
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::Fstp(register.ty, offset));
+                }
+                Instruction::Load(register, Pointer::Register(ptr))
+                    if register.ty == F32 || register.ty == F64 =>
+                {
+                    x86_func.push(X86Instruction::FldReg(register.ty, ptr));
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::Fstp(register.ty, offset));
+                }
+                Instruction::Load(register, Pointer::GlobalVar(name))
+                    if register.ty == F32 || register.ty == F64 =>
+                {
+                    let symbol = self.global_var_symbols.get(&name).unwrap().clone();
+                    x86_func.push(X86Instruction::FldGlobal(register.ty, symbol));
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::Fstp(register.ty, offset));
+                }
                 Instruction::Load(register, Pointer::MemorySlot(slot)) => {
                     let offset = *x86_func.memory_slots.get(&slot).unwrap();
                     x86_func.push(X86Instruction::LoadMem(register, offset));
@@ -316,6 +407,9 @@ impl X86Module {
                 Instruction::Load(register, Pointer::GlobalVar(name)) => {
                     let symbol = self.global_var_symbols.get(&name).unwrap().clone();
                     x86_func.push(X86Instruction::LoadGlobal(register, symbol));
+                }
+                Instruction::LoadParam(register, ..) if register.ty == I64 => {
+                    unimplemented!()
                 }
                 Instruction::LoadParam(register, param) => {
                     let mut offset = 8;
@@ -329,7 +423,16 @@ impl X86Module {
                     }
 
                     x86_func.uses_params = true;
-                    x86_func.push(X86Instruction::LoadMem(register, offset));
+                    if register.ty == F32 || register.ty == F64 {
+                        x86_func.push(X86Instruction::Fld(register.ty, offset));
+                        let offset = x86_func.vreg_offset(register);
+                        x86_func.push(X86Instruction::Fstp(register.ty, offset));
+                    } else {
+                        x86_func.push(X86Instruction::LoadMem(register, offset));
+                    }
+                }
+                Instruction::Store(ty, ..) if ty == I64 || ty == F32 || ty == F64 => {
+                    unimplemented!()
                 }
                 Instruction::Store(ty, Pointer::MemorySlot(ptr), Value::Constant(imm)) => {
                     let imm = const_to_bits(ty, imm);
@@ -372,20 +475,91 @@ impl X86Module {
                 }
 
                 Instruction::Mov(r1, Value::Register(r2)) => {
-                    x86_func.push(X86Instruction::Mov(r1, r2));
+                    if r1.ty == F32 || r1.ty == F64 {
+                        let v1 = x86_func.vreg_offset(r1);
+                        let v2 = x86_func.vreg_offset(r2);
+                        x86_func.push(X86Instruction::Fld(r2.ty, v2));
+                        x86_func.push(X86Instruction::Fstp(r1.ty, v1));
+                    } else if r1.ty == I64 {
+                        unimplemented!("64-bit mov");
+                    } else {
+                        x86_func.push(X86Instruction::Mov(r1, r2));
+                    }
                 }
-                Instruction::Mov(register, Value::Constant(imm)) => {
-                    x86_func.push(X86Instruction::MovImm(
-                        register,
-                        const_to_bits(register.ty, imm),
-                    ));
+                Instruction::Mov(register, Value::Constant(Constant::Float(imm))) => {
+                    if register.ty != F32 && register.ty != F64 {
+                        unreachable!("cannot move float to integer register");
+                    }
+
+                    let v = x86_func.vreg_offset(register);
+                    let symbol = match register.ty {
+                        F32 => self.add_f32_const(imm as f32),
+                        F64 => self.add_f64_const(imm as f64),
+                        _ => unreachable!(),
+                    };
+                    x86_func.push(X86Instruction::FldGlobal(register.ty, symbol));
+                    x86_func.push(X86Instruction::Fstp(register.ty, v));
+                }
+                Instruction::Mov(register, Value::Constant(Constant::Int(imm))) => {
+                    if register.ty == F32 || register.ty == F64 {
+                        unreachable!("cannot move integer to float register");
+                    } else if register.ty == I64 {
+                        unimplemented!("64-bit mov");
+                    } else {
+                        x86_func.push(X86Instruction::MovImm(
+                            register,
+                            const_to_bits(register.ty, Constant::Int(imm)),
+                        ));
+                    }
                 }
 
-                Instruction::Add(d, ..) if d.ty == I64 || d.ty == F32 || d.ty == F64 => todo!(),
-                Instruction::Sub(d, ..) if d.ty == I64 || d.ty == F32 || d.ty == F64 => todo!(),
-                Instruction::Mul(d, ..) if d.ty == I64 || d.ty == F32 || d.ty == F64 => todo!(),
-                Instruction::Sdiv(d, ..) if d.ty == I64 || d.ty == F32 || d.ty == F64 => todo!(),
-                Instruction::Udiv(d, ..) if d.ty == I64 || d.ty == F32 || d.ty == F64 => todo!(),
+                Instruction::Udiv(dst, ..) if dst.ty == F32 || dst.ty == F64 => {
+                    unimplemented!("use sdiv for float division");
+                }
+
+                Instruction::Add(dst, lhs, rhs)
+                | Instruction::Sub(dst, lhs, rhs)
+                | Instruction::Mul(dst, lhs, rhs)
+                | Instruction::Sdiv(dst, lhs, rhs)
+                    if dst.ty == F32 || dst.ty == F64 =>
+                {
+                    for value in [lhs, rhs] {
+                        match value {
+                            Value::Constant(Constant::Int(_)) => unreachable!(
+                                "float instruction shouldn't have integer constant operand"
+                            ),
+                            Value::Constant(Constant::Float(imm)) => {
+                                let symbol = match dst.ty {
+                                    F32 => self.add_f32_const(imm as f32),
+                                    F64 => self.add_f64_const(imm as f64),
+                                    _ => unreachable!(),
+                                };
+                                x86_func.push(X86Instruction::FldGlobal(dst.ty, symbol));
+                            }
+                            Value::Register(register) => {
+                                let offset = x86_func.vreg_offset(register);
+                                x86_func.push(X86Instruction::Fld(register.ty, offset));
+                            }
+                        };
+                    }
+
+                    match instr {
+                        Instruction::Add(..) => x86_func.push(X86Instruction::Faddp),
+                        Instruction::Sub(..) => x86_func.push(X86Instruction::Fsubp),
+                        Instruction::Mul(..) => x86_func.push(X86Instruction::Fmulp),
+                        Instruction::Sdiv(..) => x86_func.push(X86Instruction::Fdivp),
+                        _ => unreachable!(),
+                    }
+
+                    let offset = x86_func.vreg_offset(dst);
+                    x86_func.push(X86Instruction::Fstp(dst.ty, offset));
+                }
+
+                Instruction::Add(d, ..) if d.ty == I64 => unimplemented!(),
+                Instruction::Sub(d, ..) if d.ty == I64 => unimplemented!(),
+                Instruction::Mul(d, ..) if d.ty == I64 => unimplemented!(),
+                Instruction::Sdiv(d, ..) if d.ty == I64 => unimplemented!(),
+                Instruction::Udiv(d, ..) if d.ty == I64 => unimplemented!(),
 
                 Instruction::Add(dst, Value::Register(r1), Value::Register(r2)) => {
                     if dst != r2 {
@@ -608,25 +782,44 @@ impl X86Module {
                     x86_func.push(X86Instruction::Mov(dst, eax));
                 }
 
-                // TODO: f32/f64/i64
+                Instruction::Push(register) if register.ty == F32 => {
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::PushMem(register.ty, offset));
+                }
+                Instruction::Push(register) if register.ty == F64 => {
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::PushMem(F32, offset + 4));
+                    x86_func.push(X86Instruction::PushMem(F32, offset));
+                }
+                Instruction::Push(register) if register.ty == I64 => unimplemented!(),
                 Instruction::Push(register) => {
                     let register = Register::new(register.id, I32);
                     x86_func.push(X86Instruction::Push(register));
                 }
+                Instruction::Pop(register) if register.ty == F32 => {
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::PopMem(register.ty, offset));
+                }
+                Instruction::Pop(register) if register.ty == F64 => {
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::PopMem(F32, offset));
+                    x86_func.push(X86Instruction::PopMem(F32, offset + 4));
+                }
+                Instruction::Pop(register) if register.ty == I64 => unimplemented!(),
                 Instruction::Pop(register) => {
                     let register = Register::new(register.id, I32);
                     x86_func.push(X86Instruction::Pop(register));
                 }
 
-                Instruction::Add(..) => todo!(),
-                Instruction::Sub(..) => todo!(),
-                Instruction::Mul(..) => todo!(),
-                Instruction::Sdiv(..) => todo!(),
-                Instruction::Udiv(..) => todo!(),
+                Instruction::Add(..) => unimplemented!(),
+                Instruction::Sub(..) => unimplemented!(),
+                Instruction::Mul(..) => unimplemented!(),
+                Instruction::Sdiv(..) => unimplemented!(),
+                Instruction::Udiv(..) => unimplemented!(),
 
                 Instruction::Call(register, name, params, _) => {
                     if register.ty == I64 || register.ty == F32 || register.ty == F64 {
-                        todo!()
+                        unimplemented!()
                     }
 
                     x86_func.push(X86Instruction::Call(name));
@@ -657,14 +850,37 @@ impl X86Module {
                     }
                 }
 
-                Instruction::Ret(Some(Value::Constant(imm))) => {
+                Instruction::Ret(Some(Value::Constant(Constant::Float(imm)))) => {
                     let ty = func.decl.ty;
-                    let imm = const_to_bits(ty, imm);
+                    let symbol = match ty {
+                        F32 => self.add_f32_const(imm as f32),
+                        F64 => self.add_f64_const(imm as f64),
+                        _ => unreachable!(),
+                    };
+                    x86_func.push(X86Instruction::FldGlobal(ty, symbol));
+                    x86_func.push(X86Instruction::Ret);
+                }
+                Instruction::Ret(Some(Value::Constant(Constant::Int(imm)))) => {
+                    let ty = func.decl.ty;
+                    let imm = const_to_bits(ty, Constant::Int(imm));
                     x86_func.push(X86Instruction::MovImm(Register::new(EAX, ty), imm));
                     x86_func.push(X86Instruction::Ret);
                 }
-                Instruction::Ret(Some(Value::Register(r))) => {
-                    x86_func.push(X86Instruction::Mov(Register::new(EAX, r.ty), r));
+                Instruction::Ret(Some(Value::Register(register))) if register.ty == I64 => {
+                    unimplemented!("64-bit return value")
+                }
+                Instruction::Ret(Some(Value::Register(register)))
+                    if register.ty == F32 || register.ty == F64 =>
+                {
+                    let offset = x86_func.vreg_offset(register);
+                    x86_func.push(X86Instruction::Fld(register.ty, offset));
+                    x86_func.push(X86Instruction::Ret);
+                }
+                Instruction::Ret(Some(Value::Register(register))) => {
+                    x86_func.push(X86Instruction::Mov(
+                        Register::new(EAX, register.ty),
+                        register,
+                    ));
                     x86_func.push(X86Instruction::Ret);
                 }
                 Instruction::Ret(None) => {
@@ -695,6 +911,18 @@ impl X86Module {
                     writeln!(asm, "\t{}", instr)?;
                 }
             }
+        }
+
+        writeln!(asm, "\t.section .rodata")?;
+
+        for &value in self.f32_consts.iter() {
+            writeln!(asm, "{}:", f32_const(f32::from_bits(value)))?;
+            writeln!(asm, "\t.int {}", value)?;
+        }
+
+        for &value in self.f64_consts.iter() {
+            writeln!(asm, "{}:", f64_const(f64::from_bits(value)))?;
+            writeln!(asm, "\t.quad {}", value)?;
         }
 
         let mut current_section = None;
@@ -778,7 +1006,7 @@ fn reg(register: Register) -> String {
 fn add_prologue_and_epilogue(x86_func: &mut X86Function, regs_to_save: &[RegisterId]) {
     let mut instrs = vec![];
 
-    let stack_size = x86_func.memory_slot_offset;
+    let stack_size = -x86_func.memory_slot_offset;
 
     let ebp = Register::new(EBP, I32);
     let esp = Register::new(ESP, I32);
@@ -833,4 +1061,12 @@ fn param_stack_size(ty: Type) -> i128 {
         I64 | F64 => 8,
         _ => unreachable!(),
     }
+}
+
+fn f32_const(value: f32) -> String {
+    format!(".LF{:04X}", value.to_bits())
+}
+
+fn f64_const(value: f64) -> String {
+    format!(".LD{:08X}", value.to_bits())
 }

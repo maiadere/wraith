@@ -1,5 +1,5 @@
 use crate::{
-    function::{ExternalFunction, Function},
+    function::{ExternalFunction, Function, FunctionDecl},
     global_var::{ExternalVar, GlobalVar, GlobalVarKind},
     instruction::Type,
 };
@@ -20,6 +20,14 @@ impl Module {
             external_fns: Vec::new(),
             external_vars: Vec::new(),
         }
+    }
+
+    pub fn function_decls(&self) -> impl Iterator<Item = &FunctionDecl> {
+        self.functions
+            .iter()
+            .map(|f| &f.decl)
+            .chain(self.external_fns.iter().map(|f| &f.decl))
+            .into_iter()
     }
 
     pub fn function(&mut self, name: impl ToString, ty: Type) -> &mut Function {
