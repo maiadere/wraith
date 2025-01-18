@@ -294,7 +294,7 @@ impl X86Module {
                 if used_regs.contains(&reg.id) {
                     continue;
                 }
-                if reg.ty == Type::I8 || reg.ty == Type::I16 || reg.ty == Type::I32 {
+                if reg.ty == I8 || reg.ty == I16 || reg.ty == I32 {
                     used_regs.push(reg.id);
                 }
             }
@@ -445,7 +445,7 @@ impl X86Module {
 
                 Instruction::Sdiv(dst, Value::Register(r1), Value::Register(r2)) => {
                     if r2.id == EAX && dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                         x86_func.push(X86Instruction::Mov(Register::new(EBX, r2.ty), r2));
                     }
 
@@ -453,15 +453,15 @@ impl X86Module {
                     x86_func.push(X86Instruction::Mov(eax, r1));
 
                     match dst.ty {
-                        Type::I8 => x86_func.push(X86Instruction::Cbw),
-                        Type::I16 => x86_func.push(X86Instruction::Cwd),
-                        Type::I32 => x86_func.push(X86Instruction::Cdq),
+                        I8 => x86_func.push(X86Instruction::Cbw),
+                        I16 => x86_func.push(X86Instruction::Cwd),
+                        I32 => x86_func.push(X86Instruction::Cdq),
                         _ => unreachable!(),
                     }
 
                     if r2.id == EAX && dst.id != EBX {
                         x86_func.push(X86Instruction::Idiv(Register::new(EBX, r2.ty)));
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     } else {
                         x86_func.push(X86Instruction::Idiv(r2));
                     }
@@ -473,7 +473,7 @@ impl X86Module {
                     let imm = const_to_bits(dst.ty, imm);
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::MovImm(Register::new(EBX, r1.ty), imm));
@@ -482,16 +482,16 @@ impl X86Module {
                     x86_func.push(X86Instruction::Mov(eax, r1));
 
                     match dst.ty {
-                        Type::I8 => x86_func.push(X86Instruction::Cbw),
-                        Type::I16 => x86_func.push(X86Instruction::Cwd),
-                        Type::I32 => x86_func.push(X86Instruction::Cdq),
+                        I8 => x86_func.push(X86Instruction::Cbw),
+                        I16 => x86_func.push(X86Instruction::Cwd),
+                        I32 => x86_func.push(X86Instruction::Cdq),
                         _ => unreachable!(),
                     }
 
                     x86_func.push(X86Instruction::Idiv(Register::new(EBX, r1.ty)));
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(dst, eax));
@@ -501,7 +501,7 @@ impl X86Module {
                     let imm = const_to_bits(dst.ty, imm);
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(Register::new(EBX, r1.ty), r1));
@@ -510,16 +510,16 @@ impl X86Module {
                     x86_func.push(X86Instruction::MovImm(eax, imm));
 
                     match dst.ty {
-                        Type::I8 => x86_func.push(X86Instruction::Cbw),
-                        Type::I16 => x86_func.push(X86Instruction::Cwd),
-                        Type::I32 => x86_func.push(X86Instruction::Cdq),
+                        I8 => x86_func.push(X86Instruction::Cbw),
+                        I16 => x86_func.push(X86Instruction::Cwd),
+                        I32 => x86_func.push(X86Instruction::Cdq),
                         _ => unreachable!(),
                     }
 
                     x86_func.push(X86Instruction::Idiv(Register::new(EBX, r1.ty)));
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(dst, eax));
@@ -527,16 +527,14 @@ impl X86Module {
 
                 Instruction::Udiv(dst, Value::Register(r1), Value::Register(r2)) => {
                     if r2.id == EAX && dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                         x86_func.push(X86Instruction::Mov(Register::new(EBX, r2.ty), r2));
                     }
 
                     match dst.ty {
-                        Type::I8 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EAX, Type::I32), 0))
-                        }
-                        Type::I16 | Type::I32 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, Type::I32), 0))
+                        I8 => x86_func.push(X86Instruction::MovImm(Register::new(EAX, I32), 0)),
+                        I16 | I32 => {
+                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, I32), 0))
                         }
                         _ => unreachable!(),
                     }
@@ -546,7 +544,7 @@ impl X86Module {
 
                     if r2.id == EAX && dst.id != EBX {
                         x86_func.push(X86Instruction::Div(Register::new(EBX, r2.ty)));
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     } else {
                         x86_func.push(X86Instruction::Div(r2));
                     }
@@ -558,17 +556,15 @@ impl X86Module {
                     let imm = const_to_bits(dst.ty, imm);
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::MovImm(Register::new(EBX, r1.ty), imm));
 
                     match dst.ty {
-                        Type::I8 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EAX, Type::I32), 0))
-                        }
-                        Type::I16 | Type::I32 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, Type::I32), 0))
+                        I8 => x86_func.push(X86Instruction::MovImm(Register::new(EAX, I32), 0)),
+                        I16 | I32 => {
+                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, I32), 0))
                         }
                         _ => unreachable!(),
                     }
@@ -578,7 +574,7 @@ impl X86Module {
                     x86_func.push(X86Instruction::Div(Register::new(EBX, r1.ty)));
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(dst, eax));
@@ -588,17 +584,15 @@ impl X86Module {
                     let imm = const_to_bits(dst.ty, imm);
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Push(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Push(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(Register::new(EBX, r1.ty), r1));
 
                     match dst.ty {
-                        Type::I8 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EAX, Type::I32), 0))
-                        }
-                        Type::I16 | Type::I32 => {
-                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, Type::I32), 0))
+                        I8 => x86_func.push(X86Instruction::MovImm(Register::new(EAX, I32), 0)),
+                        I16 | I32 => {
+                            x86_func.push(X86Instruction::MovImm(Register::new(EDX, I32), 0))
                         }
                         _ => unreachable!(),
                     }
@@ -608,7 +602,7 @@ impl X86Module {
                     x86_func.push(X86Instruction::Div(Register::new(EBX, r1.ty)));
 
                     if dst.id != EBX {
-                        x86_func.push(X86Instruction::Pop(Register::new(EBX, Type::I32)));
+                        x86_func.push(X86Instruction::Pop(Register::new(EBX, I32)));
                     }
 
                     x86_func.push(X86Instruction::Mov(dst, eax));
@@ -631,16 +625,13 @@ impl X86Module {
                 Instruction::Udiv(..) => todo!(),
 
                 Instruction::Call(register, name, params, _) => {
-                    if register.ty == Type::I64
-                        || register.ty == Type::F32
-                        || register.ty == Type::F64
-                    {
+                    if register.ty == I64 || register.ty == F32 || register.ty == F64 {
                         todo!()
                     }
 
                     x86_func.push(X86Instruction::Call(name));
 
-                    if register.ty != Type::Void {
+                    if register.ty != Void {
                         let eax = Register::new(EAX, register.ty);
                         x86_func.push(X86Instruction::Mov(register, eax));
                     }
