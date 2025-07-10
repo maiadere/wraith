@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use derive_more::{Display, From, Into};
 use tinyvec::{TinyVec, tiny_vec};
 use typed_index_collections::TiVec;
@@ -227,28 +229,29 @@ impl Function {
 
 #[derive(Debug, Clone)]
 pub struct FunctionBuilder {
-    function: Function,
+    function: RefCell<Function>,
     current_block: Option<BasicBlockId>,
 }
 
 impl FunctionBuilder {
     pub fn new() -> Self {
         Self {
-            function: Function {
+            function: RefCell::new(Function {
                 insts: TiVec::new(),
                 blocks: TiVec::new(),
-            },
+            }),
             current_block: None,
         }
     }
 
     pub fn build(self) -> Function {
-        self.function
+        self.function.into_inner()
     }
 
-    pub fn create_block(&mut self) -> BasicBlockId {
-        self.function.blocks.push(BasicBlock { start_end: None });
-        BasicBlockId::from(self.function.blocks.len() - 1)
+    pub fn create_block(&self) -> BasicBlockId {
+        let mut func = self.function.borrow_mut();
+        func.blocks.push(BasicBlock { start_end: None });
+        BasicBlockId::from(func.blocks.len() - 1)
     }
 
     pub fn switch_to_block(&mut self, block_id: BasicBlockId) {
@@ -261,72 +264,75 @@ impl FunctionBuilder {
 
     fn expect_current_block(&self) -> BasicBlockId {
         self.current_block
-            .expect("set current block with .switch_to_block(id)")
+            .expect("set current block with switch_to_block(id)")
     }
 
-    pub fn alloca(&mut self) -> InstId {
-        self.function
-            .append(Inst::new(Opcode::Alloca, &[], self.expect_current_block()))
+    pub fn alloca(&self) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Alloca,
+            &[],
+            self.expect_current_block(),
+        ))
     }
 
-    pub fn load(&mut self, slot: InstId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn load(&self, slot: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Load,
             &[slot],
             self.expect_current_block(),
         ))
     }
 
-    pub fn store(&mut self, slot: InstId, value: InstId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn store(&self, slot: InstId, value: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Store,
             &[slot, value],
             self.expect_current_block(),
         ))
     }
 
-    pub fn constant(&mut self, value: i32) -> InstId {
-        self.function.append(Inst::new(
+    pub fn constant(&self, value: i32) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Const(value),
             &[],
             self.expect_current_block(),
         ))
     }
 
-    pub fn add(&mut self, lhs: InstId, rhs: InstId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn add(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Add,
             &[lhs, rhs],
             self.expect_current_block(),
         ))
     }
 
-    pub fn eq(&mut self, lhs: InstId, rhs: InstId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn eq(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Eq,
             &[lhs, rhs],
             self.expect_current_block(),
         ))
     }
 
-    pub fn ret(&mut self, value: InstId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn ret(&self, value: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Ret,
             &[value],
             self.expect_current_block(),
         ))
     }
 
-    pub fn jmp(&mut self, target: BasicBlockId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn jmp(&self, target: BasicBlockId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Jmp(target),
             &[],
             self.expect_current_block(),
         ))
     }
 
-    pub fn br(&mut self, cond: InstId, ift: BasicBlockId, iff: BasicBlockId) -> InstId {
-        self.function.append(Inst::new(
+    pub fn br(&self, cond: InstId, ift: BasicBlockId, iff: BasicBlockId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
             Opcode::Br(ift, iff),
             &[cond],
             self.expect_current_block(),
