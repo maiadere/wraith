@@ -1,0 +1,13 @@
+[package]
+name = "wraith"
+version = "0.1.0"
+description = "A simple compiler backend"
+authors = ["maya"]
+license = "MIT"
+edition = "2024"
+repository = "https://github.com/maiadere/wraith"
+
+[dependencies]
+derive_more = { version = "2.0.1", features = ["display", "from", "into"] }
+tinyvec = { version = "1.9.0", features = ["alloc"] }
+typed-index-collections = "3.3.0"
