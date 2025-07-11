@@ -4,22 +4,90 @@ use derive_more::{Display, From, Into};
 use tinyvec::{TinyVec, tiny_vec};
 use typed_index_collections::TiVec;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq)]
+pub enum Type {
+    Void,
+    Ptr,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Opcode {
     Nop,
     Identity,
-    Alloca,
-    Load,
+    Alloca {
+        ty: Type,
+        count: usize,
+        alignment: usize,
+    },
+    Load(Type),
     Store,
-    Const(i32),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    F32(f32),
+    F64(f64),
     Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
     Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
     Ret,
     Jmp(BasicBlockId),
     Br(BasicBlockId, BasicBlockId),
     Phi,
     Upsilon(InstId),
 }
+
+pub trait ToConstOpcode {
+    fn to_const_opcode(self) -> Opcode;
+}
+
+macro_rules! impl_to_const_opcode {
+    ($ty:tt, $opcode:expr) => {
+        impl ToConstOpcode for $ty {
+            fn to_const_opcode(self) -> Opcode {
+                $opcode(self)
+            }
+        }
+    };
+}
+
+impl_to_const_opcode!(i8, Opcode::I8);
+impl_to_const_opcode!(i16, Opcode::I16);
+impl_to_const_opcode!(i32, Opcode::I32);
+impl_to_const_opcode!(i64, Opcode::I64);
+impl_to_const_opcode!(u8, Opcode::U8);
+impl_to_const_opcode!(u16, Opcode::U16);
+impl_to_const_opcode!(u32, Opcode::U32);
+impl_to_const_opcode!(u64, Opcode::U64);
+impl_to_const_opcode!(f32, Opcode::F32);
+impl_to_const_opcode!(f64, Opcode::F64);
 
 #[derive(Clone, Copy, Display, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Default)]
 pub struct InstId(usize);
@@ -209,6 +277,70 @@ impl Function {
         (0..self.insts.len()).map(|id| InstId::from(id))
     }
 
+    pub fn inst_type(&self, id: InstId) -> Type {
+        let inst = &self.insts[id];
+
+        match inst.opcode {
+            Opcode::Nop
+            | Opcode::Store
+            | Opcode::Ret
+            | Opcode::Jmp(..)
+            | Opcode::Br(..)
+            | Opcode::Upsilon(..) => Type::Void,
+
+            Opcode::Alloca { .. } => Type::Ptr,
+
+            Opcode::Load(ty) => ty,
+
+            Opcode::I8(_) => Type::I8,
+            Opcode::I16(_) => Type::I16,
+            Opcode::I32(_) => Type::I32,
+            Opcode::I64(_) => Type::I64,
+            Opcode::U8(_) => Type::U8,
+            Opcode::U16(_) => Type::U16,
+            Opcode::U32(_) => Type::U32,
+            Opcode::U64(_) => Type::U64,
+            Opcode::F32(_) => Type::F32,
+            Opcode::F64(_) => Type::F64,
+
+            Opcode::Add
+            | Opcode::Sub
+            | Opcode::Mul
+            | Opcode::Div
+            | Opcode::Rem
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Shr
+            | Opcode::Eq
+            | Opcode::Ne
+            | Opcode::Gt
+            | Opcode::Lt
+            | Opcode::Ge
+            | Opcode::Le
+            | Opcode::Identity => {
+                let mut types = inst.args.iter().map(|&id| self.inst_type(id));
+                if let Some(first) = types.next() {
+                    assert!(types.all(|t| t == first));
+                    first
+                } else {
+                    panic!("opcode {:?} requires >= 1 argument(s)", inst.opcode);
+                }
+            }
+
+            Opcode::Phi => self
+                .insts
+                .iter_enumerated()
+                .find(|(_, inst)| match inst.opcode {
+                    Opcode::Upsilon(phi_id) if phi_id == id => true,
+                    _ => false,
+                })
+                .map(|(inst_id, _)| self.inst_type(inst_id))
+                .unwrap_or(Type::Void),
+        }
+    }
+
     pub fn dump(&self) {
         for block_id in self.iter_block_ids() {
             println!("{:?}:", block_id);
@@ -267,33 +399,37 @@ impl FunctionBuilder {
             .expect("set current block with switch_to_block(id)")
     }
 
-    pub fn alloca(&self) -> InstId {
+    pub fn alloca(&self, ty: Type) -> InstId {
         self.function.borrow_mut().append(Inst::new(
-            Opcode::Alloca,
+            Opcode::Alloca {
+                ty,
+                count: 1,
+                alignment: 1,
+            },
             &[],
             self.expect_current_block(),
         ))
     }
 
-    pub fn load(&self, slot: InstId) -> InstId {
+    pub fn load(&self, ty: Type, src: InstId) -> InstId {
         self.function.borrow_mut().append(Inst::new(
-            Opcode::Load,
-            &[slot],
+            Opcode::Load(ty),
+            &[src],
             self.expect_current_block(),
         ))
     }
 
-    pub fn store(&self, slot: InstId, value: InstId) -> InstId {
+    pub fn store(&self, dst: InstId, value: InstId) -> InstId {
         self.function.borrow_mut().append(Inst::new(
             Opcode::Store,
-            &[slot, value],
+            &[dst, value],
             self.expect_current_block(),
         ))
     }
 
-    pub fn constant(&self, value: i32) -> InstId {
+    pub fn constant(&self, value: impl ToConstOpcode) -> InstId {
         self.function.borrow_mut().append(Inst::new(
-            Opcode::Const(value),
+            value.to_const_opcode(),
             &[],
             self.expect_current_block(),
         ))
@@ -307,9 +443,121 @@ impl FunctionBuilder {
         ))
     }
 
+    pub fn sub(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Sub,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn mul(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Mul,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn div(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Div,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn rem(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Rem,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn and(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::And,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn or(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Or,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn xor(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Xor,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn shl(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Shl,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn shr(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Shr,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
     pub fn eq(&self, lhs: InstId, rhs: InstId) -> InstId {
         self.function.borrow_mut().append(Inst::new(
             Opcode::Eq,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn ne(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Ne,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn gt(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Gt,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn lt(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Lt,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn ge(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Ge,
+            &[lhs, rhs],
+            self.expect_current_block(),
+        ))
+    }
+
+    pub fn le(&self, lhs: InstId, rhs: InstId) -> InstId {
+        self.function.borrow_mut().append(Inst::new(
+            Opcode::Le,
             &[lhs, rhs],
             self.expect_current_block(),
         ))

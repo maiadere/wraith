@@ -7,23 +7,65 @@ use crate::{
     ir::{BasicBlockId, Function, InsertPosition, Inst, InstId, Opcode},
 };
 
+pub fn find_allocas(func: &Function) -> HashMap<InstId, HashSet<BasicBlockId>> {
+    let mut defs = HashMap::new();
+
+    let mut next = func.blocks[BasicBlockId::from(0)].start();
+
+    while let Some(id) = next {
+        let inst = &func.insts[id];
+        next = inst.next;
+
+        if let Opcode::Alloca { count: 1, .. } = inst.opcode {
+            defs.insert(id, HashSet::new());
+        }
+    }
+
+    for inst in func.insts.iter() {
+        match inst.opcode {
+            Opcode::Store => {
+                let dst = inst.args[0];
+                let src = inst.args[1];
+                let src_ty = func.inst_type(src);
+
+                match func.insts[dst].opcode {
+                    Opcode::Alloca { ty, count: 1, .. } if ty == src_ty => {
+                        if let Some(alloca_defs) = defs.get_mut(&dst) {
+                            alloca_defs.insert(inst.block_id);
+                        }
+                    }
+                    Opcode::Alloca { .. } => {
+                        defs.remove(&dst);
+                    }
+                    _ => {}
+                }
+            }
+            Opcode::Load(load_ty) => {
+                let src = inst.args[0];
+
+                match func.insts[src].opcode {
+                    Opcode::Alloca { ty, count: 1, .. } if ty != load_ty => {
+                        defs.remove(&src);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    defs
+}
+
 pub fn convert_to_ssa(func: &mut Function) {
     let dom = dominators(&func);
     let idom = immediate_dominators(&dom);
     let df = dominance_frontiers(&func, &idom);
 
+    let mut allocas = HashSet::new();
     let mut phi_map = HashMap::new();
 
-    for (alloca_id, mut defs) in func
-        .insts
-        .iter()
-        .filter(|inst| inst.opcode == Opcode::Store)
-        .map(|inst| (inst.args[0], inst.block_id))
-        .fold(HashMap::new(), |mut map, (a, b)| {
-            map.entry(a).or_insert_with(HashSet::new).insert(b);
-            map
-        })
-    {
+    for (alloca_id, mut defs) in find_allocas(func) {
         let mut blocks_with_phi = HashSet::new();
 
         while !defs.is_empty() {
@@ -45,14 +87,24 @@ pub fn convert_to_ssa(func: &mut Function) {
                 defs.insert(block_id);
             }
         }
+
+        allocas.insert(alloca_id);
     }
 
-    rename(BasicBlockId::from(0), func, HashMap::new(), &phi_map, &idom);
+    rename(
+        BasicBlockId::from(0),
+        func,
+        &allocas,
+        HashMap::new(),
+        &phi_map,
+        &idom,
+    );
 }
 
 fn rename(
     block_id: BasicBlockId,
     func: &mut Function,
+    allocas: &HashSet<InstId>,
     mut stack: HashMap<InstId, Vec<InstId>>,
     phi_map: &HashMap<InstId, InstId>,
     idom: &TiVec<BasicBlockId, Option<BasicBlockId>>,
@@ -64,24 +116,27 @@ fn rename(
         next = inst.next;
 
         match inst.opcode {
-            Opcode::Alloca => {
+            Opcode::Alloca { .. } if allocas.contains(&id) => {
                 stack.insert(id, vec![]);
 
                 inst.opcode = Opcode::Nop;
                 inst.args.clear();
             }
-            Opcode::Load => {
-                let ids = stack
-                    .get(&inst.args[0])
-                    .expect("load should be preceded by alloca");
-
-                inst.opcode = Opcode::Identity;
-                inst.args[0] = *ids.iter().last().expect("load should be preceded by store");
+            Opcode::Load(..) => {
+                let Some(ids) = stack.get(&inst.args[0]) else {
+                    continue;
+                };
+                if let Some(&last) = ids.iter().last() {
+                    inst.opcode = Opcode::Identity;
+                    inst.args[0] = last;
+                } else {
+                    todo!("ub: load before store")
+                }
             }
             Opcode::Store => {
-                let ids = stack
-                    .get_mut(&inst.args[0])
-                    .expect("store should be preceded by alloca");
+                let Some(ids) = stack.get_mut(&inst.args[0]) else {
+                    continue;
+                };
                 ids.push(id);
 
                 inst.opcode = Opcode::Identity;
@@ -130,6 +185,6 @@ fn rename(
         .iter_enumerated()
         .filter(|&(_, &d)| d == Some(block_id))
     {
-        rename(b, func, stack.clone(), phi_map, idom);
+        rename(b, func, allocas, stack.clone(), phi_map, idom);
     }
 }
